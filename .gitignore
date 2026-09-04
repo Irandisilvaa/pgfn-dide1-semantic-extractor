@@ -1,0 +1,27 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime / sensitive outputs
+runtime/*
+!runtime/.gitkeep
+*.jsonl
+
+# models
+*.gguf
+models/
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# logs
+*.log
