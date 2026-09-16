@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "seed": 20260904,
+  "contains_real_pgfn_data": false,
+  "n_10": 10,
+  "n_100": 100,
+  "difficulty_counts": {
+    "facil": 35,
+    "dificil": 25,
+    "medio": 30,
+    "muito_dificil": 10
+  },
+  "scenario_counts": {
+    "intimacao_impugnacao": 5,
+    "requisicao_pagamento": 5,
+    "procedencia_restituicao": 5,
+    "tutela_deferida": 5,
+    "tutela_indeferida": 5,
+    "arquivamento": 5,
+    "honorarios": 5,
+    "prescricao": 5,
+    "reconhecimento_procedencia": 5,
+    "contrarrazoes": 5,
+    "contadoria": 5,
+    "obrigacao_fazer": 5,
+    "compensacao": 5,
+    "suspensao_cobranca": 5,
+    "transito_julgado": 5,
+    "extincao": 5,
+    "improcedencia": 5,
+    "parcelamento_pgfn": 5,
+    "manifestacao_pfn": 5,
+    "homologacao_acordo": 5
+  },
+  "gold_categories_reviewed_per_excerpt": true,
+  "primary_pilot_model": "Qwen3.5-9B"
+}

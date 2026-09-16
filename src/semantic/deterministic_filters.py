@@ -97,6 +97,32 @@ _PREPARATORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+_NARRATIVE_OR_ARGUMENT_RE = re.compile(
+    r"(?:"
+    r"^a parte (?:autora|ré|re|requerente|impetrante)\s+"
+    r"(?:alega|alegou|sustenta|sustentou|requer|requereu|pediu|pugnou)\b|"
+    r"^a defesa\s+(?:apresentou|alega|alegou|sustenta|sustentou)\b|"
+    r"^o minist[ée]rio p[úu]blico\s+informou\b|"
+    r"^foram juntados documentos\b|"
+    r"^a legisla[cç][ãa]o de reg[êe]ncia cont[ée]m regras gerais\b|"
+    r"^a controv[ée]rsia exige interpreta[cç][ãa]o sistem[áa]tica\b|"
+    r"^a jurisprud[êe]ncia citada pelas partes\b|"
+    r"^o art\.\s*\d+.*(?:mencionad|invocad|citado)"
+    r")",
+    re.IGNORECASE,
+)
+
+_STRONG_JUDICIAL_ACTION_RE = re.compile(
+    r"\b(?:"
+    r"determino|defiro|indefiro|julgo|homologo|condeno|declaro|"
+    r"reconhe[cç]o|intime(?:m)?-se|notifique(?:m)?-se|d[êe]-se|"
+    r"expe[cç]a-se|oficie-se|arquive(?:m)?-se|remetam-se|"
+    r"encaminhem-se|suspenda-se|fica\s+determinado"
+    r")\b",
+    re.IGNORECASE,
+)
+
 _ACTION_WORDS = (
     "determino",
     "defiro",
@@ -235,6 +261,9 @@ def low_value_reason(text: str) -> str | None:
     if _TRIBUNAL_HEADER_RE.match(raw):
         return "court_header"
 
+    if _NARRATIVE_OR_ARGUMENT_RE.search(raw) and not _STRONG_JUDICIAL_ACTION_RE.search(raw):
+        return "narrative_or_argument"
+
     incomplete = incomplete_reason(raw)
     if incomplete and not (
         incomplete == "trailing_colon_fragment"
@@ -280,29 +309,32 @@ def infer_category_hint(text: str) -> str | None:
     if "honorár" in norm or "honorar" in norm or "custas" in norm:
         return "honorarios_custas"
 
-    if any(x in norm for x in ("restitu", "repetição de indébito", "repeticao de indebido")):
-        return "restituicao_pagamento"
+    if "prescri" in norm or "decad" in norm:
+        return "prescricao_decadencia"
 
-    if any(x in norm for x in ("julgo", "homologo", "improcedente", "procedente", "extingo")):
+    if any(x in norm for x in ("tutela", "liminar")):
+        return "tutela"
+
+    if re.match(r"^\s*(?:julgo|homologo|extingo)\b", norm):
         return "resultado_julgamento"
 
-    if any(x in norm for x in ("tutela", "liminar", "suspensão", "suspensao")):
-        return "tutela"
+    if any(x in norm for x in ("restitu", "repetição de indébito", "repeticao de indebido", "compensa")):
+        return "restituicao_pagamento"
 
     if any(x in norm for x in ("intime", "notifique", "manifestação", "manifestacao", "ciência", "ciencia", "parecer")):
         return "intimacao_manifestacao"
 
-    if "prazo" in norm:
-        return "prazo_cumprimento"
-
     if any(x in norm for x in ("recurso", "remessa", "trânsito em julgado", "transito em julgado", "arquiv")):
         return "recurso_proximo_passo"
 
-    if "prescri" in norm or "decad" in norm:
-        return "prescricao_decadencia"
-
     if any(x in norm for x in ("reconhe", "concord", "não se oporia", "nao se oporia")):
         return "reconhecimento_concordancia"
+
+    if "prazo" in norm:
+        return "prazo_cumprimento"
+
+    if any(x in norm for x in ("determino", "encaminhem-se", "remetam-se", "oficie-se")):
+        return "ordem_determinacao"
 
     return None
 
