@@ -332,7 +332,7 @@ def main() -> None:
             overlap |= processes_by_split[splits[i]] & processes_by_split[splits[j]]
 
     manifest = {
-        "version": "3.1.0-local-xlsx-teacher-gold-slm",
+        "version": "3.2.0-real-pilot-filters",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "review_xlsx": str(review),
         "validated_documents": len(gold_records),

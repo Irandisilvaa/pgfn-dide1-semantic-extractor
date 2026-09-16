@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .deterministic_filters import (
+    effective_section,
     heuristic_score,
     infer_category_hint,
     low_value_reason,
@@ -44,9 +45,14 @@ arquivamento, prescrição ou providência processual relevante.
 
 DISTINÇÃO OBRIGATÓRIA:
 - "a parte requereu X" NÃO significa que o juiz determinou X;
+- itens como "a) A concessão...", "a) DETERMINE..." e
+  "ao final, seja julgado..." podem ser PEDIDOS DA PARTE, não decisão;
+- "a decisão/sentença de id. X determinou..." pode apenas relatar ato anterior;
+- "indeferiu-se ... no id. X" pode ser histórico, não comando atual;
+- "Prazo 5 dias" ou "Cumpra-se com urgência" isolados não são autossuficientes;
 - "a defesa alegou X" NÃO significa que X foi decidido;
 - explicação abstrata de lei/jurisprudência NÃO é providência;
-- prefira DISPOSITIVO e comandos efetivamente adotados pelo julgador.
+- prefira DISPOSITIVO e comandos efetivamente adotados AGORA pelo julgador.
 
 REGRAS DE FIDELIDADE:
 - selecione somente IDs fornecidos;
@@ -69,6 +75,8 @@ Priorize:
 
 Não selecione narrativa de pedido, alegação, juntada de documentos,
 fundamentação abstrata, cabeçalho ou comando isolado sem conteúdo.
+Rejeite também pedido enumerado da parte ("a) DETERMINE...", "seja julgado...")
+e mera referência histórica a decisão/sentença anterior.
 
 UNIDADES:
 {units}
@@ -84,11 +92,18 @@ ou providência concreta adotada na decisão.
 
 REJEITE especialmente:
 - relato do que uma parte pediu/alegou;
+- pedidos enumerados como "a) A concessão...", "a) DETERMINE...",
+  "ao final, seja julgado..." quando não forem dispositivo judicial;
+- relato histórico: "a decisão/sentença de id. X determinou...",
+  "indeferiu-se ... no id. X";
 - discussão abstrata de lei/jurisprudência;
 - juntada de documentos;
+- fragmento órfão como "Prazo 5 dias" ou "Cumpra-se com urgência";
 - frase genérica sem efeito operacional;
 - duplicata semântica/textual.
 
+O SCORE é apenas heurístico e NÃO prova que o recorte é válido.
+A semântica e a distinção pedido x decisão x histórico prevalecem.
 Prefira candidatos do DISPOSITIVO quando houver equivalentes.
 
 CANDIDATOS:
@@ -187,7 +202,8 @@ class ActionOrientedExtractor:
         eligible_ids: set[str] = set()
 
         for unit in units:
-            reason = low_value_reason(unit.text)
+            section = effective_section(unit.text, unit.section)
+            reason = low_value_reason(unit.text, section=section)
             if reason:
                 filter_reasons[reason] += 1
             else:
@@ -225,9 +241,10 @@ class ActionOrientedExtractor:
             for item in payload.get("recortes", []):
                 uid = item["id"]
                 unit = by_id[uid]
+                section = effective_section(unit.text, unit.section)
 
                 # Defesa em profundidade: revalida filtro no texto escolhido.
-                reason = low_value_reason(unit.text)
+                reason = low_value_reason(unit.text, section=section)
                 if reason:
                     filter_reasons[f"post_{reason}"] += 1
                     continue
@@ -246,10 +263,10 @@ class ActionOrientedExtractor:
                         text=unit.text,
                         category=category,
                         priority=priority,
-                        section=unit.section,
+                        section=section,
                         heuristic_score=heuristic_score(
                             text=unit.text,
-                            section=unit.section,
+                            section=section,
                             model_priority=priority,
                         ),
                     )

@@ -1,4 +1,4 @@
-# PGFN DIDE1 — Teacher → GOLD → SLM v3.1.0
+# PGFN DIDE1 — Teacher → GOLD → SLM v3.2.0
 
 Pipeline local para ler uma planilha XLSX real, gerar candidatos com o Qwen3.5-9B local, obter validação humana e depois treinar um Small Language Model especializado.
 
@@ -24,9 +24,22 @@ DIDE1-SLM
 checkpoints + adapter_final + modelo mesclado opcional
 ```
 
+## Mudanças da v3.2
+
+A v3.2 mantém a entrada XLSX local da v3.1 e incorpora correções derivadas do primeiro piloto real de 100 decisões, sem versionar qualquer decisão real:
+
+- filtro conservador para itens que parecem **pedido da parte**, como enumerações em modo subjuntivo/imperativo;
+- filtro para referências claras a **decisões anteriores** (`decisão/sentença de id...`);
+- rejeição de fragmentos órfãos, como prazo isolado e comando genérico sem conteúdo;
+- melhor precedência de categorias para resultado do julgamento, tutela e próximo passo recursal;
+- promoção de decisum textual claro para seção `DISPOSITIVO`;
+- prompt final reforçado: score heurístico nunca substitui a distinção pedido x decisão x histórico;
+- script `14_teacher_export_next_100_v32.ps1` para testar **100 decisões novas**, retomando automaticamente da próxima linha do checkpoint anterior quando disponível;
+- script `15_teacher_export_next_500_v32.ps1` preparado para a etapa seguinte, mas só deve ser usado após revisão do novo lote de 100.
+
 ## Mudança da v3.1
 
-Não existe mais dependência de API de planilha, token ou `SPREADSHEET_ID`.
+Não existe dependência de API de planilha, token ou `SPREADSHEET_ID`.
 
 A entrada é um arquivo `.xlsx` colocado **localmente na máquina institucional**, por padrão:
 
@@ -119,6 +132,24 @@ Depois faça 100:
 
 ```powershell
 .\scripts\11_teacher_export_100.ps1
+```
+
+Na v3.2, para avaliar as correções em **100 decisões novas** sem repetir as primeiras 100 linhas de dados:
+
+```powershell
+.\scripts\14_teacher_export_next_100_v32.ps1
+```
+
+Por padrão, esse script lê `teacher_100_checkpoint.json` e começa na próxima linha ainda não processada. Se o checkpoint não existir, usa a linha Excel `102`. Ele gera:
+
+```text
+runtime/private_annotations/teacher_review_v32_next100.xlsx
+```
+
+Só depois da revisão desse lote, o próximo lote preparado é:
+
+```powershell
+.\scripts\15_teacher_export_next_500_v32.ps1
 ```
 
 E somente depois rode a planilha inteira:
