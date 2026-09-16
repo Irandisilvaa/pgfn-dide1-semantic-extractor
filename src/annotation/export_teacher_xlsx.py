@@ -13,7 +13,7 @@ from src.semantic.action_extractor import ActionOrientedExtractor
 from src.semantic.local_llm import LocalLLMClient
 
 
-PIPELINE_VERSION = "3.1.0-local-xlsx-teacher-gold-slm"
+PIPELINE_VERSION = "3.2.0-real-pilot-filters"
 
 
 def process_hash(processo: str, salt: str = "dide1-review") -> str:

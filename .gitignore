@@ -1,20 +1,35 @@
-# secrets
+# secrets locais
 .env
 .env.*
 !.env.example
 
-# runtime / sensitive outputs
+# entrada real local - NUNCA versionar
+data_private/*
+!data_private/README.txt
+
+# runtime / saídas sensíveis
 runtime/*
 !runtime/.gitkeep
 *.jsonl
+# benchmarks sintéticos são deliberadamente versionados
 !data/benchmark_10.jsonl
 !data/benchmark_100.jsonl
-# models
+
+# planilhas reais / revisão
+*.xlsx
+*.xlsm
+*.xls
+
+# modelos / treinamento
 *.gguf
+*.safetensors
 models/
+artifacts/models/*
+!artifacts/models/.gitkeep
 
 # python
 .venv/
+.venv-train/
 __pycache__/
 *.py[cod]
 .pytest_cache/

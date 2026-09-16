@@ -33,3 +33,17 @@ Somente após autorização e na máquina institucional:
 - nenhum overwrite de tags/indicadores existentes.
 
 Os resultados reais devem ser reportados separadamente dos sintéticos.
+
+## Gate v3.2 após o primeiro lote real
+
+Antes de escalar o teacher para 500+ decisões, revisar um lote novo de 100 e registrar manualmente:
+
+- falso positivo por **pedido da parte**;
+- falso positivo por **referência histórica**;
+- fragmento órfão / semanticamente incompleto;
+- categoria incorreta;
+- decisão sem candidato que possua recorte acionável (falso negativo);
+- candidatos aprovados, ajustados e rejeitados.
+
+O `heuristic_score` não é probabilidade de acerto e não deve ser usado como GOLD.
+A anotação do teacher só vira GOLD após validação humana completa da decisão.

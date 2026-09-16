@@ -97,6 +97,55 @@ _PREPARATORY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Padrões observados no piloto real v3.1: itens de pedido da parte que
+# lexicalmente parecem comandos judiciais. A regra é deliberadamente
+# conservadora e não se aplica quando o trecho já está marcado como DISPOSITIVO.
+_PARTY_REQUEST_LIST_RE = re.compile(
+    r"^\s*(?:[a-z]|[ivxlcdm]+|\d+)\s*[.)-]\s*(?:"
+    r"a\s+concess[ãa]o\b|"
+    r"o\s+deferimento\b|"
+    r"a\s+suspens[ãa]o\b|"
+    r"seja\s+(?:julgad[oa]|declarad[oa]|reconhecid[oa]|concedid[oa])\b|"
+    r"(?:determine|conceda|declare|reconhe[cç]a|confirme|expe[cç]a|autorize)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_PARTY_REQUEST_FINAL_RE = re.compile(
+    r"^\s*(?:[a-z]\s*[.)-]\s*)?(?:e\s+)?ao\s+final,?\s+"
+    r"(?:seja|a\s+concess[ãa]o|o\s+deferimento)\b",
+    re.IGNORECASE,
+)
+
+# Referências inequívocas a decisões anteriores não devem ser tratadas como
+# comando atual. Mantemos padrões específicos para reduzir falso bloqueio.
+_HISTORICAL_DECISION_RE = re.compile(
+    r"(?:"
+    r"^\s*(?:na\s+sequ[êe]ncia,?\s*)?a\s+(?:decis[ãa]o|senten[cç]a|despacho|ac[óo]rd[ãa]o)\s+"
+    r"(?:de\s+)?id\.?\s*\d+.*\b(?:reconheceu|determinou|deferiu|indeferiu|julgou|homologou|condenou)\b|"
+    r"^\s*(?:indeferiu-se|deferiu-se|determinou-se|julgou-se|homologou-se)\b.*\b(?:no|na)\s+id\.?\s*\d+|"
+    r"\b(?:foi|foram)\s+(?:deferid|indeferid|determinad|julgad|homologad|reconhecid)[a-záéíóúâêôãõç]*\b.*\bid\.?\s*\d+"
+    r")",
+    re.IGNORECASE,
+)
+
+_ORPHAN_DEADLINE_RE = re.compile(
+    r"^\s*prazo\s*:?[ \t]*(?:de\s+)?\d{1,4}\s*(?:\([^)]*\)\s*)?"
+    r"(?:dias?|horas?|meses?)\.?\s*$",
+    re.IGNORECASE,
+)
+
+_GENERIC_URGENCY_RE = re.compile(
+    r"^\s*cumpra-se\s+(?:com\s+)?urg[êe]ncia[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+_INTERNAL_GENERIC_ORDER_RE = re.compile(
+    r"^\s*adote\s+a\s+secretaria\s+as\s+provid[êe]ncias\s+necess[áa]rias"
+    r"\s+ao\s+impulsionamento\s+do\s+feito[.!]?\s*$",
+    re.IGNORECASE,
+)
+
 
 _NARRATIVE_OR_ARGUMENT_RE = re.compile(
     r"(?:"
@@ -205,6 +254,20 @@ def has_strong_dispositive(text: str) -> bool:
     return any(word in norm for word in _STRONG_DISPOSITIVE)
 
 
+def effective_section(text: str, section: str) -> str:
+    """Promove para DISPOSITIVO quando o próprio recorte é um decisum claro."""
+    norm = normalize_for_rule(text)
+    if re.match(r"^(?:ante|diante)\s+(?:(?:do|o)\s+)?exposto\b", norm):
+        return "DISPOSITIVO"
+    if re.match(
+        r"^(?:julgo|homologo|extingo|condeno|declaro|defiro|indefiro|"
+        r"denego|concedo|rejeito|nego\s+provimento|dou\s+provimento)\b",
+        norm,
+    ):
+        return "DISPOSITIVO"
+    return section
+
+
 def incomplete_reason(text: str) -> str | None:
     raw = (text or "").strip()
     norm = normalize_for_rule(raw)
@@ -230,7 +293,7 @@ def incomplete_reason(text: str) -> str | None:
     return None
 
 
-def low_value_reason(text: str) -> str | None:
+def low_value_reason(text: str, *, section: str | None = None) -> str | None:
     raw = (text or "").strip()
     norm = normalize_for_rule(raw)
 
@@ -240,8 +303,21 @@ def low_value_reason(text: str) -> str | None:
     if norm in _EXACT_LOW_VALUE:
         return "generic_or_heading"
 
-    if _GENERIC_COMMAND_RE.match(raw):
+    if _GENERIC_COMMAND_RE.match(raw) or _GENERIC_URGENCY_RE.match(raw):
         return "generic_command"
+
+    if _ORPHAN_DEADLINE_RE.match(raw):
+        return "orphan_deadline"
+
+    if _INTERNAL_GENERIC_ORDER_RE.match(raw):
+        return "generic_internal_order"
+
+    if (section or "").upper() != "DISPOSITIVO":
+        if _PARTY_REQUEST_LIST_RE.search(raw) or _PARTY_REQUEST_FINAL_RE.search(raw):
+            return "likely_party_request"
+
+    if _HISTORICAL_DECISION_RE.search(raw):
+        return "historical_reference"
 
     if _DATE_ONLY_RE.match(raw):
         return "date_only"
@@ -304,6 +380,13 @@ def has_action_signal(text: str) -> bool:
 
 
 def infer_category_hint(text: str) -> str | None:
+    """
+    Retorna apenas categorias com sinal textual forte.
+
+    A ordem é intencional: resultado final e próximo passo recursal devem
+    prevalecer sobre palavras incidentais como "liminar", "prazo" ou
+    "manifestação" presentes no mesmo trecho.
+    """
     norm = normalize_for_rule(text)
 
     if "honorár" in norm or "honorar" in norm or "custas" in norm:
@@ -312,20 +395,72 @@ def infer_category_hint(text: str) -> str | None:
     if "prescri" in norm or "decad" in norm:
         return "prescricao_decadencia"
 
+    # Resultado atual do julgamento / recurso.
+    if re.search(
+        r"(?:^|\b)(?:"
+        r"julgo\b|homologo\b|extingo\b|denego\s+a\s+seguran[cç]a\b|"
+        r"concedo(?:\s+parcialmente)?\s+a\s+seguran[cç]a\b|"
+        r"rejeito\s+(?:os\s+)?embargos\b|nego(?:-lhes)?\s+provimento\b|"
+        r"dou\s+provimento\b|recurso\s+(?:provido|desprovido)\b|"
+        r"apela[cç][ãa]o\s+(?:provida|improvida)\b"
+        r")",
+        norm,
+    ):
+        return "resultado_julgamento"
+
+    # Tutela/liminar, desde que não seja um resultado final capturado acima.
     if any(x in norm for x in ("tutela", "liminar")):
         return "tutela"
 
-    if re.match(r"^\s*(?:julgo|homologo|extingo)\b", norm):
-        return "resultado_julgamento"
-
-    if any(x in norm for x in ("restitu", "repetição de indébito", "repeticao de indebido", "compensa")):
+    if any(
+        x in norm
+        for x in (
+            "restitu",
+            "repetição de indébito",
+            "repeticao de indebido",
+            "compensa",
+        )
+    ):
         return "restituicao_pagamento"
 
-    if any(x in norm for x in ("intime", "notifique", "manifestação", "manifestacao", "ciência", "ciencia", "parecer")):
-        return "intimacao_manifestacao"
-
-    if any(x in norm for x in ("recurso", "remessa", "trânsito em julgado", "transito em julgado", "arquiv")):
+    # Próximo passo recursal/processual antes de intimação/prazo, pois esses
+    # termos frequentemente coexistem em contrarrazões/remessa ao TRF.
+    if any(
+        x in norm
+        for x in (
+            "contrarraz",
+            "remeta-se",
+            "remetam-se",
+            "remeter os autos",
+            "remeta o feito",
+            "trf",
+            "reexame necessário",
+            "reexame necessario",
+            "duplo grau",
+            "trânsito em julgado",
+            "transito em julgado",
+            "arquive-se",
+            "arquivem-se",
+            "retornem os autos ao arquivo",
+            "voltem os autos ao arquivo",
+            "recurso",
+        )
+    ):
         return "recurso_proximo_passo"
+
+    if any(
+        x in norm
+        for x in (
+            "intime",
+            "notifique",
+            "manifestação",
+            "manifestacao",
+            "ciência",
+            "ciencia",
+            "parecer",
+        )
+    ):
+        return "intimacao_manifestacao"
 
     if any(x in norm for x in ("reconhe", "concord", "não se oporia", "nao se oporia")):
         return "reconhecimento_concordancia"
@@ -333,7 +468,17 @@ def infer_category_hint(text: str) -> str | None:
     if "prazo" in norm:
         return "prazo_cumprimento"
 
-    if any(x in norm for x in ("determino", "encaminhem-se", "remetam-se", "oficie-se")):
+    if any(
+        x in norm
+        for x in (
+            "determino",
+            "determinar à",
+            "determinar a",
+            "encaminhem-se",
+            "oficie-se",
+            "abstenha",
+        )
+    ):
         return "ordem_determinacao"
 
     return None
@@ -385,5 +530,11 @@ def heuristic_score(
         )
     ):
         score -= 2.0
+
+    if _PARTY_REQUEST_LIST_RE.search(text) or _PARTY_REQUEST_FINAL_RE.search(text):
+        score -= 5.0
+
+    if _HISTORICAL_DECISION_RE.search(text):
+        score -= 5.0
 
     return round(score, 3)
