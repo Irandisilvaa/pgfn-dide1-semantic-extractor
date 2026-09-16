@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass, replace
-from typing import Iterable
+from dataclasses import asdict, dataclass
+import re
+from typing import Any
 
 from .deterministic_filters import (
     heuristic_score,
@@ -10,10 +11,10 @@ from .deterministic_filters import (
     low_value_reason,
 )
 from .local_llm import LocalLLMClient
-from .segmenter import TextUnit, group_units, make_units
+from .segmenter import group_units, make_units
 
 
-ALLOWED_CATEGORIES = {
+ALLOWED_CATEGORIES = [
     "resultado_julgamento",
     "ordem_determinacao",
     "intimacao_manifestacao",
@@ -26,147 +27,69 @@ ALLOWED_CATEGORIES = {
     "prescricao_decadencia",
     "reconhecimento_concordancia",
     "outro_acionavel",
-}
+]
 
 
 SYSTEM_PROMPT = """
-Você atua como FILTRO EXTRATIVO de decisões judiciais para apoio à
-Procuradoria-Geral da Fazenda Nacional.
+Você é um extrator de RECORTES ACIONÁVEIS de decisões judiciais brasileiras
+para apoio humano à Procuradoria-Geral da Fazenda Nacional.
 
-OBJETIVO:
-Selecionar somente passagens do próprio documento que possam ajudar um
-procurador a saber, avaliar ou fazer algo.
+Sua função NÃO é resumir, interpretar o direito ou responder à decisão.
+Sua função é escolher IDs de trechos que já existem no documento.
 
-PERGUNTA CENTRAL:
-"Este próprio trecho contém uma conclusão, ordem, prazo, consequência,
-obrigação, manifestação, resultado ou outro fato operacional concreto?"
+Um trecho é acionável quando, sozinho, comunica uma consequência concreta
+da decisão: resultado do julgamento, ordem, intimação, prazo, obrigação,
+tutela, pagamento/restituição, honorários/custas, recurso, trânsito,
+arquivamento, prescrição ou providência processual relevante.
 
-PRIORIDADE:
-5 = consequência operacional direta/importante para PGFN/Fazenda/União.
-4 = consequência processual relevante.
-3 = informação potencialmente útil sem providência imediata.
-1-2 = relevância residual; normalmente não selecionar.
+DISTINÇÃO OBRIGATÓRIA:
+- "a parte requereu X" NÃO significa que o juiz determinou X;
+- "a defesa alegou X" NÃO significa que X foi decidido;
+- explicação abstrata de lei/jurisprudência NÃO é providência;
+- prefira DISPOSITIVO e comandos efetivamente adotados pelo julgador.
 
-NÃO selecionar:
-- cabeçalho;
-- identificação isolada;
-- data/hora;
-- assinatura;
-- simples narrativa de pedido/alegação;
-- transcrição normativa sem consequência concreta;
-- frase preparatória que apenas introduz o próximo trecho;
-- comando genérico isolado como "Cumpra-se";
-- texto apenas porque contém linguagem jurídica.
-
-ATOMICIDADE:
-Cada candidato selecionado nesta etapa deve conter EXATAMENTE UM ID.
-
-REGRAS:
-1. Não reescreva o trecho.
-2. Não invente IDs.
-3. Não use conhecimento externo.
-4. Não é necessário preencher o máximo.
-5. Responda SOMENTE JSON válido.
+REGRAS DE FIDELIDADE:
+- selecione somente IDs fornecidos;
+- não reescreva texto;
+- não invente fatos;
+- não use conhecimento externo;
+- não é obrigatório selecionar nada;
+- evite duplicidade e fragmentos genéricos.
 """.strip()
 
 
 CHUNK_PROMPT = """
-Analise as unidades abaixo.
+Selecione no máximo {max_candidates} unidades acionáveis deste bloco.
 
-Formato:
-[ID][SECAO=...] texto
+Priorize:
+1. DISPOSITIVO com ordem/conclusão concreta;
+2. providência dirigida à PGFN/PFN/Fazenda Nacional/União;
+3. prazo, obrigação ou próximo passo;
+4. resultado, tutela, restituição/pagamento, honorários, prescrição.
 
-Selecione NO MÁXIMO {max_candidates} unidades realmente acionáveis.
-
-Categorias permitidas:
-resultado_julgamento
-ordem_determinacao
-intimacao_manifestacao
-tutela
-obrigacao
-prazo_cumprimento
-restituicao_pagamento
-honorarios_custas
-recurso_proximo_passo
-prescricao_decadencia
-reconhecimento_concordancia
-outro_acionavel
-
-Retorne SOMENTE:
-{{
-  "recortes": [
-    {{
-      "id": "P0001",
-      "categoria": "ordem_determinacao",
-      "prioridade": 5
-    }}
-  ]
-}}
-
-Cada objeto deve conter UM ÚNICO id.
-Se nada for acionável: {{"recortes":[]}}.
+Não selecione narrativa de pedido, alegação, juntada de documentos,
+fundamentação abstrata, cabeçalho ou comando isolado sem conteúdo.
 
 UNIDADES:
 {units}
 """.strip()
 
 
-VALIDATOR_PROMPT = """
-Avalie SOMENTE os candidatos literais abaixo.
-
-MANter=true somente se o próprio texto:
-- contém ação, consequência, resultado, prazo, obrigação, intimação,
-  manifestação, tutela, pagamento/restituição, recurso, prescrição,
-  honorários/custas ou outro fato operacional concreto; E
-- é compreensível o suficiente para ser mostrado ao procurador.
-
-MANter=false se:
-- for cabeçalho/data/assinatura/identificação;
-- for frase preparatória;
-- for fragmento incompleto;
-- for simples narrativa do pedido/alegação;
-- for comando genérico isolado.
-
-Retorne TODOS os candidatos recebidos, sem omitir nenhum.
-
-Formato:
-{{
-  "avaliacoes": [
-    {{
-      "candidate": "C01",
-      "manter": true,
-      "relevancia": 5
-    }}
-  ]
-}}
-
-CANDIDATOS:
-{candidates}
-""".strip()
-
-
 FINAL_PROMPT = """
-Escolha NO MÁXIMO {top_k} candidatos para mostrar ao procurador.
+Faça a adjudicação FINAL. Escolha no máximo {top_k} candidatos para mostrar
+a um procurador.
 
-PREFIRA:
-1. ordem/intimação/prazo/manifestaçao dirigida à PFN/PGFN/Fazenda/União;
-2. obrigação concreta;
-3. tutela com efeito concreto;
-4. resultado do julgamento;
-5. recurso, trânsito, arquivamento ou próximo passo;
-6. honorários/custas e demais consequências operacionais.
+Um candidato só deve permanecer se o próprio texto comunicar uma consequência
+ou providência concreta adotada na decisão.
 
-Regras:
-- prefira DISPOSITIVO quando houver conteúdo acionável equivalente;
-- evite narrativa do relatório;
-- evite redundância;
-- mantenha ações independentes separadas;
-- não é obrigatório preencher {top_k} posições.
+REJEITE especialmente:
+- relato do que uma parte pediu/alegou;
+- discussão abstrata de lei/jurisprudência;
+- juntada de documentos;
+- frase genérica sem efeito operacional;
+- duplicata semântica/textual.
 
-Retorne SOMENTE:
-{{
-  "selecionados": ["C01", "C02"]
-}}
+Prefira candidatos do DISPOSITIVO quando houver equivalentes.
 
 CANDIDATOS:
 {candidates}
@@ -180,10 +103,12 @@ class SemanticCandidate:
     category: str
     priority: int
     section: str
-    validator_relevance: int
-    validator_status: str
     heuristic_score: float
-    context_expanded: bool = False
+    rank: int = 0
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip()).casefold()
 
 
 class ActionOrientedExtractor:
@@ -192,67 +117,87 @@ class ActionOrientedExtractor:
         client: LocalLLMClient,
         *,
         max_candidates_per_chunk: int = 4,
-        max_chunk_chars: int = 3000,
-        max_unit_chars: int = 1000,
-        temperature: float = 0.0,
-        validator_batch_size: int = 6,
-        max_global_candidates: int = 30,
-        enable_context_expansion: bool = True,
+        max_chunk_chars: int = 5200,
+        max_unit_chars: int = 1200,
+        temperature: float = 0.2,
+        max_global_candidates: int = 24,
     ):
         self.client = client
         self.max_candidates_per_chunk = max_candidates_per_chunk
         self.max_chunk_chars = max_chunk_chars
         self.max_unit_chars = max_unit_chars
         self.temperature = temperature
-        self.validator_batch_size = max(
-            1,
-            int(validator_batch_size),
-        )
-        self.max_global_candidates = max(
-            1,
-            int(max_global_candidates),
-        )
-        self.enable_context_expansion = enable_context_expansion
+        self.max_global_candidates = max_global_candidates
 
-    def extract(
-        self,
-        decision: str,
-        *,
-        top_k: int = 3,
-    ) -> dict:
-        units = make_units(
-            decision,
-            max_unit_chars=self.max_unit_chars,
-        )
+    @staticmethod
+    def _chunk_schema(valid_ids: list[str], max_candidates: int) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "recortes": {
+                    "type": "array",
+                    "maxItems": max_candidates,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string", "enum": valid_ids},
+                            "categoria": {
+                                "type": "string",
+                                "enum": ALLOWED_CATEGORIES,
+                            },
+                            "prioridade": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 5,
+                            },
+                        },
+                        "required": ["id", "categoria", "prioridade"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["recortes"],
+            "additionalProperties": False,
+        }
+
+    @staticmethod
+    def _final_schema(valid_ids: list[str], top_k: int) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "selecionados": {
+                    "type": "array",
+                    "maxItems": top_k,
+                    "items": {
+                        "type": "string",
+                        "enum": valid_ids,
+                    },
+                }
+            },
+            "required": ["selecionados"],
+            "additionalProperties": False,
+        }
+
+    def extract(self, decision: str, *, top_k: int = 3) -> dict[str, Any]:
+        units = make_units(decision, max_unit_chars=self.max_unit_chars)
         by_id = {u.id: u for u in units}
-        by_index = {u.index: u for u in units}
-        chunks = group_units(
-            units,
-            max_chunk_chars=self.max_chunk_chars,
-        )
+        chunks = group_units(units, max_chunk_chars=self.max_chunk_chars)
 
         filter_reasons: Counter[str] = Counter()
         eligible_ids: set[str] = set()
 
         for unit in units:
             reason = low_value_reason(unit.text)
-
             if reason:
                 filter_reasons[reason] += 1
             else:
                 eligible_ids.add(unit.id)
 
-        raw_candidates: list[SemanticCandidate] = []
-        invalid_ids = 0
-        post_filter_rejected = 0
+        raw: list[SemanticCandidate] = []
+        llm_calls = 0
 
         for chunk in chunks:
-            selectable = [
-                unit
-                for unit in chunk
-                if unit.id in eligible_ids
-            ]
-
+            selectable = [u for u in chunk if u.id in eligible_ids]
             if not selectable:
                 continue
 
@@ -260,6 +205,7 @@ class ActionOrientedExtractor:
                 f"[{u.id}][SECAO={u.section}] {u.text}"
                 for u in selectable
             )
+            valid_ids = [u.id for u in selectable]
 
             payload = self.client.chat_json(
                 system=SYSTEM_PROMPT,
@@ -267,84 +213,62 @@ class ActionOrientedExtractor:
                     max_candidates=self.max_candidates_per_chunk,
                     units=rendered,
                 ),
+                schema=self._chunk_schema(
+                    valid_ids,
+                    self.max_candidates_per_chunk,
+                ),
                 temperature=self.temperature,
                 max_tokens=420,
             )
+            llm_calls += 1
 
             for item in payload.get("recortes", []):
-                unit_id = str(item.get("id", "")).strip()
+                uid = item["id"]
+                unit = by_id[uid]
 
-                if unit_id not in by_id:
-                    invalid_ids += 1
-                    continue
-
-                unit = by_id[unit_id]
-
+                # Defesa em profundidade: revalida filtro no texto escolhido.
                 reason = low_value_reason(unit.text)
                 if reason:
                     filter_reasons[f"post_{reason}"] += 1
-                    post_filter_rejected += 1
                     continue
 
-                try:
-                    priority = int(item.get("prioridade", 3))
-                except Exception:
-                    priority = 3
+                priority = int(item["prioridade"])
+                category = str(item["categoria"])
 
-                priority = max(1, min(5, priority))
-
-                category = str(
-                    item.get("categoria", "outro_acionavel")
-                ).strip()
-
-                if category not in ALLOWED_CATEGORIES:
-                    category = "outro_acionavel"
-
+                # Só sobrescreve quando a regra textual é inequívoca.
                 hint = infer_category_hint(unit.text)
                 if hint:
                     category = hint
 
-                candidate = SemanticCandidate(
-                    unit_ids=[unit.id],
-                    text=unit.text,
-                    category=category,
-                    priority=priority,
-                    section=unit.section,
-                    validator_relevance=0,
-                    validator_status="NOT_RUN",
-                    heuristic_score=heuristic_score(
+                raw.append(
+                    SemanticCandidate(
+                        unit_ids=[uid],
                         text=unit.text,
+                        category=category,
+                        priority=priority,
                         section=unit.section,
-                        model_priority=priority,
-                    ),
-                    context_expanded=False,
+                        heuristic_score=heuristic_score(
+                            text=unit.text,
+                            section=unit.section,
+                            model_priority=priority,
+                        ),
+                    )
                 )
 
-                if self.enable_context_expansion:
-                    candidate = self._expand_context_if_needed(
-                        candidate,
-                        by_id=by_id,
-                        by_index=by_index,
-                    )
-
-                raw_candidates.append(candidate)
-
-        # dedup por combinação exata de IDs
-        best: dict[tuple[str, ...], SemanticCandidate] = {}
-
-        for candidate in raw_candidates:
-            key = tuple(candidate.unit_ids)
-            prev = best.get(key)
-
+        # Deduplicação por TEXTO normalizado (corrige duplicatas vindas de
+        # unidades distintas/chunks sobrepostos).
+        best_by_text: dict[str, SemanticCandidate] = {}
+        for candidate in raw:
+            key = _norm(candidate.text)
+            prev = best_by_text.get(key)
             if (
                 prev is None
-                or (candidate.priority, candidate.heuristic_score)
-                > (prev.priority, prev.heuristic_score)
+                or (candidate.heuristic_score, candidate.priority)
+                > (prev.heuristic_score, prev.priority)
             ):
-                best[key] = candidate
+                best_by_text[key] = candidate
 
-        candidates = list(best.values())
-
+        candidates = list(best_by_text.values())
         candidates.sort(
             key=lambda c: (
                 -c.heuristic_score,
@@ -352,303 +276,69 @@ class ActionOrientedExtractor:
                 c.unit_ids[0],
             )
         )
-
         candidates = candidates[: self.max_global_candidates]
-        before_validator = len(candidates)
 
-        (
-            candidates,
-            validator_rejected,
-            validator_failed,
-        ) = self._validate_in_batches(candidates)
+        before_final = len(candidates)
+        selected: list[SemanticCandidate] = []
 
-        # Recalcula score com relevância do validador.
-        rescored: list[SemanticCandidate] = []
+        if candidates:
+            mapping: dict[str, SemanticCandidate] = {}
+            rendered: list[str] = []
 
-        for candidate in candidates:
-            score = heuristic_score(
-                text=candidate.text,
-                section=candidate.section,
-                model_priority=candidate.priority,
-                validator_relevance=candidate.validator_relevance,
-            )
-            rescored.append(
-                replace(
-                    candidate,
-                    heuristic_score=score,
-                )
-            )
-
-        candidates = rescored
-        candidates.sort(
-            key=lambda c: (
-                c.validator_status != "PASSED",
-                -c.validator_relevance,
-                -c.heuristic_score,
-                -c.priority,
-                c.unit_ids[0],
-            )
-        )
-
-        if len(candidates) > top_k:
-            candidates = self._rerank(
-                candidates,
-                top_k=top_k,
-            )
-
-        return {
-            "recortes": [
-                asdict(c)
-                for c in candidates[:top_k]
-            ],
-            "n_units": len(units),
-            "n_chunks": len(chunks),
-            "n_eligible_units": len(eligible_ids),
-            "filtered_units": sum(filter_reasons.values()),
-            "filter_reasons": dict(filter_reasons),
-            "n_candidates_before_validator": before_validator,
-            "validator_rejected": validator_rejected,
-            "validator_failed": validator_failed,
-            "rejected_invalid_ids": invalid_ids,
-            "rejected_post_filter": post_filter_rejected,
-        }
-
-    def _needs_next_context(self, text: str) -> bool:
-        stripped = text.strip()
-        lower = stripped.lower()
-
-        if stripped.endswith(":"):
-            # Só expande se a frase contém decisão forte.
-            return any(
-                word in lower
-                for word in (
-                    "homologo",
-                    "julgo",
-                    "determino",
-                    "condeno",
-                    "declaro",
-                )
-            )
-
-        return False
-
-    def _expand_context_if_needed(
-        self,
-        candidate: SemanticCandidate,
-        *,
-        by_id: dict[str, TextUnit],
-        by_index: dict[int, TextUnit],
-    ) -> SemanticCandidate:
-        if not self._needs_next_context(candidate.text):
-            return candidate
-
-        unit = by_id[candidate.unit_ids[0]]
-        nxt = by_index.get(unit.index + 1)
-
-        if nxt is None:
-            return candidate
-
-        if low_value_reason(nxt.text):
-            return candidate
-
-        combined = f"{candidate.text}\n{nxt.text}".strip()
-
-        if len(combined) > 1800:
-            return candidate
-
-        return replace(
-            candidate,
-            unit_ids=[unit.id, nxt.id],
-            text=combined,
-            context_expanded=True,
-        )
-
-    def _validate_batch(
-        self,
-        candidates: list[SemanticCandidate],
-    ) -> tuple[list[SemanticCandidate], int, int]:
-        """
-        Retorna (mantidos, rejeitados, falhas_individuais).
-
-        Se um lote falhar, divide recursivamente.
-        Se até um candidato isolado falhar, ele é mantido com status ERROR
-        para não mascarar a falha como validação positiva.
-        """
-        if not candidates:
-            return [], 0, 0
-
-        mapping: dict[str, SemanticCandidate] = {}
-        rendered: list[str] = []
-
-        for i, candidate in enumerate(candidates, start=1):
-            cid = f"C{i:02d}"
-            mapping[cid] = candidate
-            rendered.append(
-                f"[{cid}] secao={candidate.section}; "
-                f"categoria={candidate.category}; "
-                f"prioridade={candidate.priority}\n"
-                f"{candidate.text}"
-            )
-
-        try:
-            payload = self.client.chat_json(
-                system=SYSTEM_PROMPT,
-                user=VALIDATOR_PROMPT.format(
-                    candidates="\n\n".join(rendered),
-                ),
-                temperature=self.temperature,
-                max_tokens=500,
-            )
-
-            evaluations = payload.get("avaliacoes", [])
-
-            if not isinstance(evaluations, list):
-                raise RuntimeError(
-                    "Campo avaliacoes inválido."
+            for i, candidate in enumerate(candidates, start=1):
+                cid = f"C{i:02d}"
+                mapping[cid] = candidate
+                rendered.append(
+                    f"[{cid}] SECAO={candidate.section}; "
+                    f"CATEGORIA={candidate.category}; "
+                    f"PRIORIDADE={candidate.priority}; "
+                    f"SCORE={candidate.heuristic_score}\n"
+                    f"{candidate.text}"
                 )
 
-            by_candidate = {
-                str(item.get("candidate", "")).strip(): item
-                for item in evaluations
-                if isinstance(item, dict)
-            }
-
-            # O prompt exige que todos sejam devolvidos.
-            if any(cid not in by_candidate for cid in mapping):
-                raise RuntimeError(
-                    "Validador omitiu candidato(s)."
-                )
-
-            kept: list[SemanticCandidate] = []
-            rejected = 0
-
-            for cid, candidate in mapping.items():
-                item = by_candidate[cid]
-                keep = bool(item.get("manter", False))
-
-                try:
-                    relevance = int(
-                        item.get("relevancia", 3)
-                    )
-                except Exception:
-                    relevance = 3
-
-                relevance = max(1, min(5, relevance))
-
-                if keep:
-                    kept.append(
-                        replace(
-                            candidate,
-                            validator_relevance=relevance,
-                            validator_status="PASSED",
-                        )
-                    )
-                else:
-                    rejected += 1
-
-            return kept, rejected, 0
-
-        except Exception:
-            if len(candidates) > 1:
-                middle = len(candidates) // 2
-                left = self._validate_batch(
-                    candidates[:middle]
-                )
-                right = self._validate_batch(
-                    candidates[middle:]
-                )
-
-                return (
-                    left[0] + right[0],
-                    left[1] + right[1],
-                    left[2] + right[2],
-                )
-
-            candidate = candidates[0]
-            return [
-                replace(
-                    candidate,
-                    validator_relevance=0,
-                    validator_status="ERROR",
-                )
-            ], 0, 1
-
-    def _validate_in_batches(
-        self,
-        candidates: list[SemanticCandidate],
-    ) -> tuple[list[SemanticCandidate], int, int]:
-        kept: list[SemanticCandidate] = []
-        rejected = 0
-        failed = 0
-
-        for start in range(
-            0,
-            len(candidates),
-            self.validator_batch_size,
-        ):
-            batch = candidates[
-                start:start + self.validator_batch_size
-            ]
-            batch_kept, batch_rejected, batch_failed = (
-                self._validate_batch(batch)
-            )
-            kept.extend(batch_kept)
-            rejected += batch_rejected
-            failed += batch_failed
-
-        return kept, rejected, failed
-
-    def _rerank(
-        self,
-        candidates: list[SemanticCandidate],
-        *,
-        top_k: int,
-    ) -> list[SemanticCandidate]:
-        mapping: dict[str, SemanticCandidate] = {}
-        rendered: list[str] = []
-
-        for i, candidate in enumerate(candidates, start=1):
-            cid = f"C{i:02d}"
-            mapping[cid] = candidate
-
-            rendered.append(
-                f"[{cid}] secao={candidate.section}; "
-                f"categoria={candidate.category}; "
-                f"prioridade={candidate.priority}; "
-                f"validacao={candidate.validator_relevance}; "
-                f"status={candidate.validator_status}; "
-                f"score={candidate.heuristic_score}\n"
-                f"{candidate.text}"
-            )
-
-        try:
             payload = self.client.chat_json(
                 system=SYSTEM_PROMPT,
                 user=FINAL_PROMPT.format(
                     top_k=top_k,
                     candidates="\n\n".join(rendered),
                 ),
+                schema=self._final_schema(list(mapping), top_k),
                 temperature=self.temperature,
-                max_tokens=220,
+                max_tokens=180,
             )
+            llm_calls += 1
 
-            selected = [
-                str(x).strip()
-                for x in payload.get("selecionados", [])
-            ]
+            seen_text: set[str] = set()
+            for cid in payload.get("selecionados", []):
+                candidate = mapping[cid]
+                key = _norm(candidate.text)
+                if key in seen_text:
+                    continue
+                seen_text.add(key)
+                selected.append(candidate)
+                if len(selected) >= top_k:
+                    break
 
-            chosen: list[SemanticCandidate] = []
-            seen: set[str] = set()
+        selected = [
+            SemanticCandidate(
+                unit_ids=c.unit_ids,
+                text=c.text,
+                category=c.category,
+                priority=c.priority,
+                section=c.section,
+                heuristic_score=c.heuristic_score,
+                rank=i,
+            )
+            for i, c in enumerate(selected, start=1)
+        ]
 
-            for cid in selected:
-                if cid in mapping and cid not in seen:
-                    chosen.append(mapping[cid])
-                    seen.add(cid)
-
-            if chosen:
-                return chosen[:top_k]
-
-        except Exception:
-            pass
-
-        return candidates[:top_k]
+        return {
+            "recortes": [asdict(c) for c in selected],
+            "n_units": len(units),
+            "n_chunks": len(chunks),
+            "n_eligible_units": len(eligible_ids),
+            "filtered_units": sum(filter_reasons.values()),
+            "filter_reasons": dict(filter_reasons),
+            "n_candidates_before_final": before_final,
+            "llm_calls": llm_calls,
+        }
