@@ -1,104 +1,224 @@
-# DIDE1 — Piloto Local v2.0.0
+# PGFN DIDE1 — Teacher → GOLD → SLM v3.1.0
 
-Pipeline extrativo para testar modelos locais em decisões judiciais sintéticas.
+Pipeline local para ler uma planilha XLSX real, gerar candidatos com o Qwen3.5-9B local, obter validação humana e depois treinar um Small Language Model especializado.
 
-## Modelo principal
+## Arquitetura
 
-**Qwen3.5-9B, Q4_K_M**, servido localmente por `llama.cpp`.
-
-Motivos práticos:
-- 9B parâmetros;
-- licença Apache 2.0 no modelo base;
-- suporte multilíngue amplo;
-- quantização ~6 GB, compatível com RTX 3060 12 GB;
-- boa folga de VRAM para contexto;
-- execução 100% local;
-- saída JSON limitada por JSON Schema no próprio decoder.
-
-## O que mudou em relação à baseline 1.5B
-
-1. Modelo maior e mais recente.
-2. JSON Schema constrained output — elimina a dependência de “o modelo lembrar de escrever JSON”.
-3. IDs válidos são enumerados no schema — o modelo não pode inventar IDs.
-4. Deduplicação por texto normalizado.
-5. Regras mais fortes contra narrativa de relatório/fundamentação.
-6. Pipeline simplificado: seleção por chunk + adjudicação final.
-7. Métricas incluem Hit@1, taxa de documentos com GOLD, erros e wall time.
-8. GOLD de categoria revisado individualmente por recorte.
-
-## Segurança
-
-Este repositório:
-- não usa `.env`;
-- não usa API da planilha;
-- não contém decisões reais;
-- não chama API externa de LLM;
-- aceita o servidor de inferência apenas em `127.0.0.1/localhost`.
-
-## Fedora / Linux CPU
-
-```bash
-./scripts/linux/01_setup.sh
-./scripts/linux/02_start_qwen35_9b_cpu.sh
+```text
+XLSX real PGFN LOCAL
+        ↓
+Qwen3.5-9B local = TEACHER
+        ↓
+XLSX de revisão humana
+        ↓
+procurador aprova / rejeita / ajusta / adiciona recorte
+        ↓
+DIDE1-GOLD
+        ↓
+split por Processo
+        ↓
+SFT / QLoRA do SLM
+        ↓
+DIDE1-SLM
+        ↓
+checkpoints + adapter_final + modelo mesclado opcional
 ```
 
-Em outro terminal:
+## Mudança da v3.1
 
-```bash
-./scripts/linux/04_health.sh
-./scripts/linux/05_run_10.sh
+Não existe mais dependência de API de planilha, token ou `SPREADSHEET_ID`.
+
+A entrada é um arquivo `.xlsx` colocado **localmente na máquina institucional**, por padrão:
+
+```text
+data_private/entrada_pgfn.xlsx
 ```
 
-> Em notebook de 8 GB, o 9B Q4 pode usar swap e ficar muito lento.
-> O alvo de piloto é a RTX 3060 12 GB / 32 GB RAM.
+A aba padrão é `input` e deve ter os cabeçalhos:
 
-## Linux com NVIDIA
-
-```bash
-./scripts/linux/03_start_qwen35_9b_cuda.sh
+```text
+Extração | Processo | Classe judicial | Órgão julgador | Polo Ativo |
+Polo Passivo | Decisão | Matéria SAJ | Ind. | tags
 ```
 
-## Windows + RTX 3060
+`Processo` e `Decisão` são obrigatórios. As demais colunas são preservadas quando presentes.
+
+## Segurança dos dados reais
+
+- o Qwen aceita apenas `127.0.0.1/localhost`;
+- não existe API externa de LLM;
+- não existe API de planilha nesta versão;
+- `tags` e `Ind.` são preservados para revisão, mas não entram no prompt do teacher;
+- a planilha fonte é aberta em read-only e nunca é alterada;
+- `data_private/`, `runtime/`, planilhas reais, GOLD e modelos são ignorados pelo Git;
+- **não faça commit/push da planilha real para o GitHub**;
+- GitHub deve transportar apenas o código e os benchmarks sintéticos.
+
+## 1. Preparar o repositório na máquina PGFN
+
+Depois de clonar o código, coloque a planilha real localmente em:
+
+```text
+data_private/entrada_pgfn.xlsx
+```
+
+Se o nome for diferente, passe `-InputXlsx` nos scripts.
+
+## 2. Instalar dependências Python
 
 ```powershell
-.\scripts\windows\00_check_machine.ps1
-.\scripts\windows\01_setup.ps1
-.\scripts\windows\02_start_qwen35_9b_cuda.ps1
+.\scripts\01_setup_python.ps1
 ```
+
+## 3. Validar a planilha antes de usar o LLM
+
+```powershell
+.\scripts\09_validate_input_xlsx.ps1
+```
+
+Ou, com outro nome/aba:
+
+```powershell
+.\scripts\09_validate_input_xlsx.ps1 -InputXlsx "C:\CAMINHO\arquivo.xlsx" -Sheet "input"
+```
+
+O validador mostra quantidade de linhas, decisões vazias, processos únicos e cabeçalhos reconhecidos. Ele não imprime o conteúdo das decisões.
+
+## 4. Iniciar o Qwen local
+
+```powershell
+.\scripts\02_start_llama_local.ps1
+```
+
+Padrões já configurados:
+
+```text
+llama.cpp: C:\PGFN\DIDE1\llama\llama-server.exe
+modelo:    C:\PGFN\DIDE1\models\Qwen3.5-9B-Q4_K_M.gguf
+host:      127.0.0.1
+porta:     8081
+```
+
+Não é necessário `.env`.
+
+## 5. Gerar 20 anotações primeiro
 
 Em outro PowerShell:
 
 ```powershell
-.\scripts\windows\03_run_10.ps1
+.\scripts\10_teacher_export_20.ps1
 ```
 
-Depois:
+Saída:
+
+```text
+runtime/private_annotations/teacher_review_20.xlsx
+```
+
+Depois faça 100:
 
 ```powershell
-.\scripts\windows\04_run_100.ps1
+.\scripts\11_teacher_export_100.ps1
 ```
 
-## Resultado
+E somente depois rode a planilha inteira:
 
-Arquivos em `runtime/`:
-- `summary_*.json`
-- `results_*.jsonl`
-- `summary_*.md`
-
-## Piloto privado local posterior
-
-Há um runner sem API:
-
-```bash
-python -m src.pilot_private_local \
-  --input /CAMINHO/LOCAL/entrada.jsonl \
-  --output /CAMINHO/LOCAL/saida.jsonl
+```powershell
+.\scripts\12_teacher_export_full.ps1
 ```
 
-Formato de entrada:
+Se interromper:
 
-```json
-{"id":"ID-LOCAL","decisao":"texto da decisão"}
+```powershell
+.\scripts\13_teacher_resume_full.ps1
 ```
 
-Para dados reais, execute somente em infraestrutura institucional autorizada.
+O checkpoint registra a próxima linha do Excel e impede retomar acidentalmente com outra planilha/aba.
+
+## 6. Revisão humana
+
+A saída contém:
+
+- `decisoes`: decisão integral + status do documento;
+- `candidatos`: 1–3 candidatos do teacher;
+- `adicoes_gold`: recortes que o teacher deixou escapar;
+- `instrucoes`: protocolo de revisão;
+- `manifesto`: versão, modelo e origem local.
+
+Candidato:
+
+```text
+APROVADO | AJUSTADO | REJEITADO | SEM_RECORTE
+```
+
+Documento:
+
+```text
+VALIDADO_COMPLETO | SEM_RECORTE | PRECISA_REVISAO
+```
+
+A saída do teacher **não é GOLD** até a validação humana.
+
+## 7. Construir GOLD e dataset SFT
+
+```powershell
+.\scripts\20_build_gold.ps1 -ReviewXlsx runtime\private_annotations\teacher_review_100.xlsx
+```
+
+Gera em `runtime/private_gold/`:
+
+```text
+gold_records.jsonl
+sft_train.jsonl
+sft_val.jsonl
+sft_test.jsonl
+gold_build_issues.csv
+manifest.json
+```
+
+O split é por `Processo`, nunca por linha.
+
+## 8. Treinar o SLM com QLoRA
+
+Exemplo:
+
+```powershell
+.\scripts\30_train_qlora.ps1 -BaseModel "Qwen/Qwen3-4B" -RunName "dide1-slm-v1"
+```
+
+Retomar após interrupção:
+
+```powershell
+.\scripts\31_resume_qlora.ps1 -BaseModel "Qwen/Qwen3-4B" -RunName "dide1-slm-v1"
+```
+
+## 9. Persistência do modelo
+
+Cada treino salva:
+
+```text
+artifacts/models/dide1-slm-v1/
+├── checkpoints/
+├── adapter_final/
+├── metrics.json
+├── training_manifest.json
+└── SHA256SUMS.json
+```
+
+Para gerar um modelo mesclado independente do adapter:
+
+```powershell
+.\scripts\32_merge_adapter.ps1 -BaseModel "Qwen/Qwen3-4B" -RunName "dide1-slm-v1"
+```
+
+Para backup em armazenamento institucional aprovado:
+
+```powershell
+.\scripts\33_backup_model.ps1 -RunName "dide1-slm-v1" -Destination "D:\CAMINHO_APROVADO"
+```
+
+Modelos, adapters, planilhas reais e datasets reais não devem ser enviados ao GitHub.
+
+## Benchmark sintético
+
+Os 100 casos sintéticos permanecem em `data/benchmark_100.jsonl` para regressão do pipeline. Dados sintéticos podem ser versionados; dados reais não.

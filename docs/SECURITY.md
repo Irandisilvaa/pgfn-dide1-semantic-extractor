@@ -1,20 +1,11 @@
-# Segurança
+# Segurança — v3.1 Local XLSX → Teacher → GOLD → SLM
 
-## Benchmark sintético
-
-Pode ser executado fora da PGFN porque não contém dados reais.
-
-## Dados reais
-
-- não usar APIs públicas/terceiros sem autorização institucional;
-- manter `llama-server` em `127.0.0.1`;
-- não abrir a porta 8081 na rede;
-- não versionar inputs/resultados reais;
-- não copiar decisões reais para máquina pessoal;
-- revisar permissões do diretório local de trabalho.
-
-## Quantização
-
-O preset sintético usa uma quantização comunitária do checkpoint oficial.
-Antes de uso com dados reais, a organização deve aprovar a origem/binário
-ou gerar internamente uma quantização a partir dos pesos oficiais.
+1. O teacher roda somente em `127.0.0.1/localhost`.
+2. A planilha fonte é um XLSX local e é aberta em modo read-only.
+3. Esta versão não usa API de planilha, token de planilha ou Spreadsheet ID.
+4. `tags` e `Ind.` são preservados para revisão humana, mas não entram na inferência do teacher.
+5. A planilha real deve ficar em `data_private/` ou em outro caminho local institucional autorizado.
+6. Planilhas reais, planilhas de revisão, GOLD, datasets de treino, checkpoints e pesos não devem ser commitados/pushados para GitHub.
+7. GitHub deve transportar apenas código, documentação e datasets sintéticos deliberadamente públicos/versionáveis.
+8. O modelo treinado deve ser copiado para armazenamento institucional aprovado.
+9. Hashes SHA-256 são gerados para o adapter final e para o modelo mesclado.
