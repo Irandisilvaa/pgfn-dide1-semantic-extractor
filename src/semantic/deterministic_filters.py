@@ -67,6 +67,10 @@ _ID_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Identificadores longos puramente numéricos (IDs internos, hashes ou chaves)
+# não carregam conteúdo jurídico acionável por si só.
+_PURE_NUMERIC_TOKEN_RE = re.compile(r"^\s*\d{16,}\s*$")
+
 _GENERIC_COMMAND_RE = re.compile(
     r"^\s*(?:"
     r"intime(?:m)?(?:\(m\))?-se|"
@@ -97,41 +101,66 @@ _PREPARATORY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Padrões observados no piloto real v3.1: itens de pedido da parte que
-# lexicalmente parecem comandos judiciais. A regra é deliberadamente
-# conservadora e não se aplica quando o trecho já está marcado como DISPOSITIVO.
+# Padrões observados nos pilotos reais v3.1/v3.2: itens de pedido da parte
+# podem parecer comandos judiciais. A regra é conservadora e não se aplica
+# quando o trecho já está claramente no DISPOSITIVO.
 _PARTY_REQUEST_LIST_RE = re.compile(
-    r"^\s*(?:[a-z]|[ivxlcdm]+|\d+)\s*[.)-]\s*(?:"
+    r"^\s*(?:\(?[a-z]\)?|\(?[ivxlcdm]+\)?|\(?\d+\)?)\s*[.)-]?\s*(?:"
     r"a\s+concess[ãa]o\b|"
     r"o\s+deferimento\b|"
     r"a\s+suspens[ãa]o\b|"
+    r"o\s+reconhecimento\b|"
+    r"a\s+declara[cç][ãa]o\b|"
     r"seja\s+(?:julgad[oa]|declarad[oa]|reconhecid[oa]|concedid[oa])\b|"
-    r"(?:determine|conceda|declare|reconhe[cç]a|confirme|expe[cç]a|autorize)\b"
+    r"(?:determine|conceda|declare|reconhe[cç]a|confirme|expe[cç]a|autorize)\b|"
+    r"(?:determinar|conceder|declarar|reconhecer|confirmar|expedir|autorizar|suspender)\b"
     r")",
     re.IGNORECASE,
 )
 
 _PARTY_REQUEST_FINAL_RE = re.compile(
-    r"^\s*(?:[a-z]\s*[.)-]\s*)?(?:e\s+)?ao\s+final,?\s+"
-    r"(?:seja|a\s+concess[ãa]o|o\s+deferimento)\b",
+    r"^\s*(?:\(?[a-zivxlcdm]+\)?\s*[.)-]?\s*)?(?:e\s+)?ao\s+final,?\s+"
+    r"(?:"
+    r"seja\b|"
+    r"a\s+concess[ãa]o\b|"
+    r"o\s+deferimento\b|"
+    r"o\s+reconhecimento\b|"
+    r"a\s+declara[cç][ãa]o\b|"
+    r"a\s+restitui[cç][ãa]o\b|"
+    r"a\s+compensa[cç][ãa]o\b|"
+    r"o\s+direito\b"
+    r")",
     re.IGNORECASE,
 )
 
-# Referências inequívocas a decisões anteriores não devem ser tratadas como
-# comando atual. Mantemos padrões específicos para reduzir falso bloqueio.
+# Referências a decisões anteriores não devem ser tratadas como comando atual.
 _HISTORICAL_DECISION_RE = re.compile(
     r"(?:"
     r"^\s*(?:na\s+sequ[êe]ncia,?\s*)?a\s+(?:decis[ãa]o|senten[cç]a|despacho|ac[óo]rd[ãa]o)\s+"
     r"(?:de\s+)?id\.?\s*\d+.*\b(?:reconheceu|determinou|deferiu|indeferiu|julgou|homologou|condenou)\b|"
     r"^\s*(?:indeferiu-se|deferiu-se|determinou-se|julgou-se|homologou-se)\b.*\b(?:no|na)\s+id\.?\s*\d+|"
-    r"\b(?:foi|foram)\s+(?:deferid|indeferid|determinad|julgad|homologad|reconhecid)[a-záéíóúâêôãõç]*\b.*\bid\.?\s*\d+"
+    r"\b(?:foi|foram)\s+(?:deferid|indeferid|determinad|julgad|homologad|reconhecid)[a-záéíóúâêôãõç]*\b.*\bid\.?\s*\d+|"
+    r"^\s*por\s+meio\s+de\s+(?:despacho|decis[ãa]o|senten[cç]a|ac[óo]rd[ãa]o)\b.*"
+    r"\b(?:determinou|deferiu|indeferiu|julgou|homologou|condenou|reconheceu|notificou|cientificou)\b|"
+    r"^\s*(?:no\s+caso\s+dos\s+autos|anteriormente|em\s+decis[ãa]o\s+anterior)\b.*"
+    r"\b(?:este\s+ju[íi]zo|o\s+ju[íi]zo)\b.*"
+    r"\b(?:denegou|concedeu|determinou|deferiu|indeferiu|julgou|homologou|condenou|reconheceu)\b"
     r")",
     re.IGNORECASE,
 )
 
+# Citações jurisprudenciais extensas frequentemente contêm linguagem dispositiva
+# de outro processo. Exigimos marcadores fortes de metadados do julgado citado.
+_EXTERNAL_CASE_CITATION_RE = re.compile(
+    r"\bprocesso\s*:\s*\d+.*"
+    r"\b(?:desembargador|relator|turma|tribunal)\b.*"
+    r"\bjulgamento\s*:\s*\d{1,2}/\d{1,2}/\d{4}\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
 _ORPHAN_DEADLINE_RE = re.compile(
-    r"^\s*prazo\s*:?[ \t]*(?:de\s+)?\d{1,4}\s*(?:\([^)]*\)\s*)?"
-    r"(?:dias?|horas?|meses?)\.?\s*$",
+    r"^\s*prazo(?:\s+para\s+[^:]{1,80})?\s*:?\s*(?:de\s+)?"
+    r"\d{1,4}\s*(?:\([^)]*\)\s*)?(?:dias?|horas?|meses?)\.?\s*$",
     re.IGNORECASE,
 )
 
@@ -278,7 +307,7 @@ def incomplete_reason(text: str) -> str | None:
     if _PREPARATORY_RE.search(raw):
         return "preparatory_fragment"
 
-    if raw.endswith(":") and not has_strong_dispositive(raw):
+    if raw.endswith(":"):
         return "trailing_colon_fragment"
 
     if re.search(r"\b(?:no|do|da)\s+e\.\s*$", norm):
@@ -319,6 +348,12 @@ def low_value_reason(text: str, *, section: str | None = None) -> str | None:
     if _HISTORICAL_DECISION_RE.search(raw):
         return "historical_reference"
 
+    if _EXTERNAL_CASE_CITATION_RE.search(raw):
+        return "external_case_citation"
+
+    if _PURE_NUMERIC_TOKEN_RE.match(raw):
+        return "numeric_identifier_only"
+
     if _DATE_ONLY_RE.match(raw):
         return "date_only"
 
@@ -341,10 +376,7 @@ def low_value_reason(text: str, *, section: str | None = None) -> str | None:
         return "narrative_or_argument"
 
     incomplete = incomplete_reason(raw)
-    if incomplete and not (
-        incomplete == "trailing_colon_fragment"
-        and has_strong_dispositive(raw)
-    ):
+    if incomplete:
         return incomplete
 
     if any(norm.startswith(prefix) for prefix in _PARTY_PREFIXES):
@@ -448,11 +480,24 @@ def infer_category_hint(text: str) -> str | None:
     ):
         return "recurso_proximo_passo"
 
+    # Comandos explícitos de movimentação/cumprimento prevalecem sobre
+    # palavras incidentais como "parecer" ou "manifestação".
+    if re.match(
+        r"^\s*(?:assim,?\s*)?(?:"
+        r"determino\b|determinar\b|encaminhe-se\b|encaminhem-se\b|"
+        r"retifique-se\b|proceda-se\b|expe[cç]a-se\b|oficie-se\b"
+        r")",
+        norm,
+    ):
+        return "ordem_determinacao"
+
     if any(
         x in norm
         for x in (
             "intime",
             "notifique",
+            "cite-se",
+            "citem-se",
             "manifestação",
             "manifestacao",
             "ciência",
@@ -536,5 +581,11 @@ def heuristic_score(
 
     if _HISTORICAL_DECISION_RE.search(text):
         score -= 5.0
+
+    if _EXTERNAL_CASE_CITATION_RE.search(text):
+        score -= 7.0
+
+    if _PURE_NUMERIC_TOKEN_RE.match((text or "").strip()):
+        score -= 20.0
 
     return round(score, 3)

@@ -253,3 +253,11 @@ Modelos, adapters, planilhas reais e datasets reais não devem ser enviados ao G
 ## Benchmark sintético
 
 Os 100 casos sintéticos permanecem em `data/benchmark_100.jsonl` para regressão do pipeline. Dados sintéticos podem ser versionados; dados reais não.
+
+---
+
+## v3.3.0 — hard-negative guards
+
+A v3.3 incorpora regressões encontradas no segundo piloto real. Ela bloqueia IDs numéricos puros, referências históricas, citações externas de outros julgados, pedidos da parte em formatos adicionais, prazos órfãos e cabeçalhos incompletos. Também inclui uma ferramenta local para auditar decisões que ficaram sem candidato antes de reduzir recall por excesso de filtragem.
+
+Fluxo recomendado: `100 v3.2 -> auditoria dos zeros -> 100 inéditas v3.3 -> revisão -> 500`.

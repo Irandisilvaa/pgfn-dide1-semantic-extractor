@@ -13,7 +13,7 @@ from src.semantic.action_extractor import ActionOrientedExtractor
 from src.semantic.local_llm import LocalLLMClient
 
 
-PIPELINE_VERSION = "3.2.0-real-pilot-filters"
+PIPELINE_VERSION = "3.3.0-hard-negative-guards"
 
 
 def process_hash(processo: str, salt: str = "dide1-review") -> str:
