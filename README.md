@@ -1,4 +1,4 @@
-# PGFN DIDE1 v4 — Router + Teacher + GOLD
+# PGFN DIDE1 v4.1 — Router + Teacher Resiliente + GOLD
 
 Pipeline local para extração/classificação semântica de decisões judiciais da defesa cível.
 
@@ -17,6 +17,18 @@ Pipeline local para extração/classificação semântica de decisões judiciais
 - workbook de revisão completa por procurador;
 - geração de GOLD somente para documentos `VALIDADO_COMPLETO`;
 - estrutura pronta para medir quando adapters QLoRA por grupo/vara passam a valer a pena.
+
+
+## Novidades v4.1
+- parser tolerante a `{"selected": [...]}` e `[...]`;
+- saída estruturada por JSON Schema quando suportada pelo `llama-server`, com fallback compatível;
+- retry automático de resposta inválida;
+- fallback determinístico de regras sem derrubar o documento;
+- filtros para assinatura/data/URL e fechos genéricos;
+- preservação de ordem-mãe terminada em `:` quando seguida de lista;
+- cache SHA-256 de decisões idênticas para consistência e economia de GPU;
+- auditoria por `teacher_status`, `cache_hit`, tentativas e modo de resposta;
+- manifesto com `unique_inferences`, `cache_hits`, `rule_fallbacks` e erros recuperados.
 
 ## Segurança
 A pasta `dados/` e todas as planilhas são ignoradas pelo Git. Não versione decisões reais.
