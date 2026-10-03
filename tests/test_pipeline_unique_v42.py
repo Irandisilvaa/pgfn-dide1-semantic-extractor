@@ -39,4 +39,4 @@ def test_unique_limit_yields_exact_unique_review_rows(tmp_path, monkeypatch):
     assert manifest["cache_hits"] == 1
 
     wb = load_workbook(out / "review.xlsx")
-    assert wb["revisao_consolidada"].max_row == 3  # cabeçalho + 2 decisões únicas
+    assert wb["revisao"].max_row == 3  # cabeçalho + 2 decisões únicas

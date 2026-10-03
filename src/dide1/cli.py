@@ -2,7 +2,7 @@ import argparse
 import json
 from .pipeline import run
 from .inspect_data import inspect
-from .workbook import build_gold
+from .workbook import build_gold, rebuild_review
 
 
 def main():
@@ -25,6 +25,10 @@ def main():
     r.add_argument("--max-candidates", type=int, default=3)
     r.add_argument("--include-execucao-fiscal", action="store_true")
 
+    rb = sub.add_parser("rebuild-review", help="Recria somente o review.xlsx em layout compacto, sem chamar o Qwen")
+    rb.add_argument("--review", required=True, help="review.xlsx existente da v4.2/v4.3")
+    rb.add_argument("--output", required=True, help="novo .xlsx compacto")
+
     g = sub.add_parser("build-gold", help="Converte workbook humano revisado em GOLD JSONL")
     g.add_argument("--review", required=True)
     g.add_argument("--output", required=True)
@@ -34,9 +38,12 @@ def main():
         result = inspect(args.input, args.sheet, args.limit)
     elif args.cmd == "run":
         result = run(args.input, args.output, args.limit, args.start_index, args.sheet, args.teacher, args.max_candidates, args.include_execucao_fiscal, args.unique_limit)
+    elif args.cmd == "rebuild-review":
+        result = rebuild_review(args.review, args.output)
     else:
         result = build_gold(args.review, args.output)
     print(json.dumps(result, ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     main()

@@ -41,7 +41,7 @@ Get-Content VERSION
 Esperado:
 
 ```text
-4.2.0-review-metrics
+4.3.0-review-compact
 ```
 
 ## Rodar 500 decisões únicas
@@ -89,3 +89,14 @@ A aba `metricas` passa a refletir a qualidade conforme a revisão humana avança
 ```
 
 Consulte `docs/V4_2_NOTAS.md` e `docs/TREINAMENTO.md`.
+
+
+## v4.3 — revisão compacta
+
+A aba `revisao` contém somente os campos necessários ao procurador. Dados de auditoria ficam em abas técnicas ocultas. Para converter um `review.xlsx` já processado na v4.2 sem rodar o Qwen novamente:
+
+```powershell
+.\scripts\rebuild_review_compact_v43.ps1
+```
+
+A base padrão do piloto Windows é `dados\entrada.xlsx`.

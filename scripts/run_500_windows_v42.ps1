@@ -1,5 +1,5 @@
 param(
-    [string]$Input = ".\dados\entarda.xlsx",
+    [string]$Input = ".\dados\entrada.xlsx",
     [string]$Output = ".\runtime\piloto500_qwen_v42"
 )
 
