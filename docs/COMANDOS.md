@@ -1,88 +1,66 @@
-# Comandos de execução
+# Comandos de execução — DIDE1 v4.2
 
-## 1) PC pessoal — 20 decisões
-Use apenas amostra sanitizada ou cuja cópia no equipamento pessoal tenha autorização institucional. Não copie a base real da PGFN para notebook pessoal apenas para testar.
+## Preparação na máquina PGFN
 
-```bash
-cd pgfn-dide1-router-v4
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m pip install -e .
-python -m pytest -q
-```
-
-Coloque a amostra em `dados/amostra_20.xlsx` e valide:
-```bash
-python -m dide1.cli inspect --input dados/amostra_20.xlsx
-```
-
-Smoke test da arquitetura, sem LLM:
-```bash
-python -m dide1.cli run --input dados/amostra_20.xlsx --limit 20 --teacher rules --output runtime/piloto20_local
-```
-
-Se houver um `llama-server` local com Qwen disponível, troque `--teacher rules` por `--teacher llama`.
-
-## 2) Máquina PGFN — preparação
 ```powershell
-cd C:\PGFN\DIDE1\pgfn-dide1-router-v4
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install -e .
+cd C:\PGFN\DIDE1\v3.1\pgfn-dide1-semantic-extractor
+.\.venv\Scripts\python.exe -m pip install . --no-deps --no-cache-dir --force-reinstall
 .\.venv\Scripts\python.exe -m pytest -q
+Get-Content VERSION
+Get-Item .\dados\entarda.xlsx
 ```
 
-Coloque a planilha real somente no checkout local:
-`dados\base_consolidada.xlsx`
+## Qwen3.5-9B
 
-Confirme que o Git ignora a planilha:
-```powershell
-git check-ignore -v dados\base_consolidada.xlsx
-```
+Em outro PowerShell:
 
-Inspecione a base:
-```powershell
-.\.venv\Scripts\python.exe -m dide1.cli inspect --input dados\base_consolidada.xlsx
-```
-
-## 3) Subir Qwen3.5-9B localmente na GPU PGFN
-Em um terminal separado:
 ```powershell
 C:\PGFN\DIDE1\llama\llama-server.exe -m C:\PGFN\DIDE1\models\Qwen3.5-9B-Q4_K_M.gguf -c 8192 -t 8 -np 1 -ngl 999 --host 127.0.0.1 --port 8081 --no-webui --reasoning off
 ```
 
-Teste:
+Na janela do projeto:
+
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8081/health
+$env:DIDE1_LLM_BASE_URL = "http://127.0.0.1:8081"
+$env:DIDE1_LLM_MODEL = "Qwen3.5-9B"
+$env:DIDE1_LLM_TIMEOUT = "300"
+$env:DIDE1_LLM_RETRIES = "1"
 ```
 
-## 4) Progressão validada
-A ideia é não pular diretamente para 10.000.
+## Piloto de 500 decisões únicas
 
-### Próximas 100 após o piloto de 20
+Mais simples:
+
 ```powershell
-.\.venv\Scripts\python.exe -m dide1.cli run --input dados\base_consolidada.xlsx --start-index 20 --limit 100 --teacher llama --output runtime\lote_0021_0120
+.\scripts\run_500_windows_v42.ps1
 ```
 
-Revise `runtime\lote_0021_0120\review.xlsx` antes de avançar.
+Manual:
 
-### Próximas 1.000
 ```powershell
-.\.venv\Scripts\python.exe -m dide1.cli run --input dados\base_consolidada.xlsx --start-index 120 --limit 1000 --teacher llama --output runtime\lote_0121_1120
+Remove-Item .\runtime\piloto500_qwen_v42 -Recurse -Force -ErrorAction SilentlyContinue
+
+.\.venv\Scripts\python.exe -m dide1.cli run `
+    --input .\dados\entarda.xlsx `
+    --start-index 0 `
+    --unique-limit 500 `
+    --teacher llama `
+    --max-candidates 3 `
+    --output .\runtime\piloto500_qwen_v42
+
+Get-Content .\runtime\piloto500_qwen_v42\manifest.json
+Get-Content .\runtime\piloto500_qwen_v42\errors.jsonl
+Start-Process .\runtime\piloto500_qwen_v42\review.xlsx
 ```
 
-### Restante até completar 10.000
+## Revisão
+Use `revisao_consolidada`. Cada linha representa uma decisão única e pode conter até 3 candidatos independentes. Aprove todos os recortes corretos; ajuste ou rejeite individualmente. Use `adicao_1..3` para recortes que o teacher perdeu. Só então marque `VALIDADO_COMPLETO`.
+
+## GOLD
+
 ```powershell
-.\.venv\Scripts\python.exe -m dide1.cli run --input dados\base_consolidada.xlsx --start-index 1120 --limit 8880 --teacher llama --output runtime\lote_1121_10000
+.\.venv\Scripts\python.exe -m dide1.cli build-gold `
+    --review .\runtime\piloto500_qwen_v42\review.xlsx `
+    --output .\runtime\gold\gold_500.jsonl
 ```
-
-## 5) Criar GOLD após revisão
-Exemplo:
-```powershell
-.\.venv\Scripts\python.exe -m dide1.cli build-gold --review runtime\lote_0021_0120\review.xlsx --output runtime\gold\gold_lote100.jsonl
-```
-
-Depois, consulte `docs/TREINAMENTO.md`.

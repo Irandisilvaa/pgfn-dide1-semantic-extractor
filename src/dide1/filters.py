@@ -11,7 +11,7 @@ SIGNATURE_DATE_ONLY = re.compile(r"^\s*\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}(?::
 SIGNATURE_ROLE_BLOCK = re.compile(r"(?is)^\s*[A-ZÁÉÍÓÚÂÊÔÃÕÇ .\-]{5,}\s*\n\s*(?:ju[ií]z|ju[ií]za|desembargador|desembargadora|t[eé]cnico|analista)\b")
 LOCATION_DATE_BOILERPLATE = re.compile(r"(?is)^\s*[A-ZÁÉÍÓÚÂÊÔÃÕÇa-záéíóúâêôãõç .\-/]+,\s*(?:data(?:\s+e\s+hora)?\s+(?:registrad[ao]s?(?:\s+no\s+sistema)?|da assinatura)|na data da assinatura eletr[oô]nica)\.?\s*$")
 URL_ONLY = re.compile(r"(?is)^\s*https?://\S+\s*(?:\d{12,})?\s*$")
-GENERIC_CLOSING = re.compile(r"(?is)^\s*(?:intima[cç][õo]es?\s+e\s+)?provid[eê]ncias\s+necess[aá]rias\.?\s*$|^\s*intima[cç][õo]es?\s+e\s+provid[eê]ncias\s+necess[aá]rias\.?\s*$")
+GENERIC_CLOSING = re.compile(r"(?is)^\s*(?:\d+[.)]\s*)?(?:(?:intima[cç][õo]es?\s+e\s+)?provid[eê]ncias\s+necess[aá]rias|intima[cç][õo]es?\s+e\s+provid[eê]ncias\s+necess[aá]rias|intimem-se)\.?\s*$")
 ACTION_PARENT = re.compile(r"(?is)\b(?:determino|defiro|indefiro|condeno|fixo|homologo|intime-se|proceda|promova|adote|observe|considere)\b")
 
 

@@ -1,19 +1,36 @@
-# Runbook
+# Runbook DIDE1 v4.2
 
-A progressão recomendada é 20 -> +100 -> +1.000 -> restante até 10.000 decisões, com revisão entre etapas.
+## Saídas
+- `review.xlsx`: revisão humana consolidada.
+- `predictions.jsonl`: candidatos em formato longo para auditoria.
+- `errors.jsonl`: falhas técnicas e recuperações/fallbacks.
+- `manifest.json`: parâmetros, contagens, cache e tempo.
 
-## Saídas de cada execução
-- `review.xlsx`: planilha para procuradores.
-- `predictions.jsonl`: candidatos estruturados.
-- `errors.jsonl`: erros técnicos.
-- `manifest.json`: parâmetros e tempo.
+## Workbook
+### `revisao_consolidada`
+Interface principal. Uma linha por decisão única (`decision_sha256`). Duplicatas da base aparecem em `source_rows`, `expedientes` e `ocorrencias_na_base`.
 
-## Revisão humana
-No `review.xlsx`:
-1. Procurador lê a decisão inteira na aba `decisoes`.
-2. Marca cada candidato em `candidatos`: APROVADO/AJUSTADO/REJEITADO.
-3. Adiciona qualquer trecho perdido na aba `adicoes_gold`.
-4. Só depois marca `status_documento=VALIDADO_COMPLETO`.
+Cada candidato é independente:
+- `candidate_N_text`
+- `candidate_N_category`
+- `candidate_N_status`
+- `candidate_N_texto_ajustado`
+- `candidate_N_categoria_ajustada`
 
-## GOLD
-`python -m dide1.cli build-gold --review runtime/.../review.xlsx --output runtime/gold/gold.jsonl`
+O procurador pode aprovar mais de um recorte da mesma decisão.
+
+### `metricas`
+Calcula os indicadores após revisão humana. Antes de documentos `VALIDADO_COMPLETO`, não usar os percentuais como avaliação final do modelo.
+
+### `decisoes` e `candidatos`
+Auditoria técnica em formato longo.
+
+## Critério de GOLD
+1. Ler a decisão integral.
+2. Revisar todos os candidatos.
+3. Registrar recortes perdidos em `adicao_1..3` (ou `adicoes_gold` para extras).
+4. Marcar `VALIDADO_COMPLETO`.
+5. Executar `build-gold`.
+
+## Lotes por decisão única
+Use `--unique-limit N` quando a meta for N decisões efetivamente revisáveis. `--limit N` limita linhas da planilha e pode produzir menos decisões únicas por causa de duplicatas.

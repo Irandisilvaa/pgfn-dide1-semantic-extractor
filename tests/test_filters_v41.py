@@ -15,3 +15,11 @@ def test_actionable_parent_with_colon_is_kept():
 
 def test_location_date_boilerplate_rejected():
     assert rejection_reason("Arapiraca-AL, data e hora registradas no sistema.") == "location_date_boilerplate"
+
+
+def test_numbered_generic_closing_rejected():
+    assert rejection_reason("9. Intimações e providências necessárias.") == "generic_closing_fragment"
+
+
+def test_standalone_intimem_se_rejected():
+    assert rejection_reason("3. Intimem-se.") == "generic_closing_fragment"
