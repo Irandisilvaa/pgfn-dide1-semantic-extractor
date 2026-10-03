@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: pgfn-dide1-router
+Version: 4.0.0
+Requires-Python: >=3.10
+Requires-Dist: openpyxl<4,>=3.1
+Requires-Dist: requests<3,>=2.32

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "strategy": "hierarchical_metadata_router",
+  "profiles": [
+    {
+      "name": "mandado_seguranca",
+      "when": {"class_family": "mandado_seguranca"},
+      "specialist": "ms_specialist"
+    },
+    {
+      "name": "cumprimento_sentenca",
+      "when": {"class_family": "cumprimento_sentenca"},
+      "specialist": "cumprimento_specialist"
+    }
+  ],
+  "fallback": "global_teacher",
+  "note": "Nesta fase os especialistas são perfis de prompt/roteamento. Adapters QLoRA por vara/grupo só devem ser criados após GOLD demonstrar ganho real."
+}
