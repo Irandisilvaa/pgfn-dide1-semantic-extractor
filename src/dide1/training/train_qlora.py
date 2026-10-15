@@ -6,7 +6,7 @@ import argparse, json, os
 from pathlib import Path
 
 
-def main():
+def principal():
     p=argparse.ArgumentParser()
     p.add_argument("--base-model", required=True, help="Path local ou identificador HF autorizado")
     p.add_argument("--train", required=True)
@@ -18,7 +18,7 @@ def main():
     p.add_argument("--grad-accum", type=int, default=8)
     p.add_argument("--max-length", type=int, default=4096)
     p.add_argument("--seed", type=int, default=42)
-    args=p.parse_args()
+    argumentos=p.parse_args()
 
     from datasets import load_dataset
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TrainingArguments
@@ -26,35 +26,35 @@ def main():
     from trl import SFTTrainer
     import torch
 
-    out=Path(args.output); out.mkdir(parents=True, exist_ok=True)
-    bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
-    tok = AutoTokenizer.from_pretrained(args.base_model, use_fast=True)
-    if tok.pad_token is None: tok.pad_token = tok.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.base_model, quantization_config=bnb, device_map="auto", torch_dtype="auto")
-    peft = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM", target_modules="all-linear")
-    ds = load_dataset("json", data_files={"train":args.train,"validation":args.val})
+    saida=Path(argumentos.output); saida.mkdir(parents=True, exist_ok=True)
+    configuracao_bnb = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True, bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16)
+    tokenizador = AutoTokenizer.from_pretrained(argumentos.base_model, use_fast=True)
+    if tokenizador.pad_token is None: tokenizador.pad_token = tokenizador.eos_token
+    modelo = AutoModelForCausalLM.from_pretrained(argumentos.base_model, quantization_config=configuracao_bnb, device_map="auto", torch_dtype="auto")
+    configuracao_peft = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM", target_modules="all-linear")
+    conjunto_dados = load_dataset("json", data_files={"train":argumentos.train,"validation":argumentos.val})
 
-    def fmt(ex):
-        return tok.apply_chat_template(ex["messages"], tokenize=False, add_generation_prompt=False)
+    def formatar_exemplo(exemplo):
+        return tokenizador.apply_chat_template(exemplo["messages"], tokenize=False, add_generation_prompt=False)
 
-    targs = TrainingArguments(
-        output_dir=str(out / "checkpoints"), num_train_epochs=args.epochs,
-        learning_rate=args.lr, per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=1, gradient_accumulation_steps=args.grad_accum,
+    argumentos_treinamento = TrainingArguments(
+        output_dir=str(saida / "checkpoints"), num_train_epochs=argumentos.epochs,
+        learning_rate=argumentos.lr, per_device_train_batch_size=argumentos.batch_size,
+        per_device_eval_batch_size=1, gradient_accumulation_steps=argumentos.grad_accum,
         logging_steps=10, save_steps=100, eval_steps=100, eval_strategy="steps",
         save_strategy="steps", bf16=torch.cuda.is_available() and torch.cuda.is_bf16_supported(),
         fp16=torch.cuda.is_available() and not torch.cuda.is_bf16_supported(),
-        gradient_checkpointing=True, seed=args.seed, report_to="none",
+        gradient_checkpointing=True, seed=argumentos.seed, report_to="none",
         remove_unused_columns=False,
     )
-    trainer = SFTTrainer(
-        model=model, tokenizer=tok, train_dataset=ds["train"], eval_dataset=ds["validation"],
-        peft_config=peft, args=targs, formatting_func=fmt, max_seq_length=args.max_length,
+    treinador = SFTTrainer(
+        model=modelo, tokenizer=tokenizador, train_dataset=conjunto_dados["train"], eval_dataset=conjunto_dados["validation"],
+        peft_config=configuracao_peft, args=argumentos_treinamento, formatting_func=formatar_exemplo, max_seq_length=argumentos.max_length,
     )
-    trainer.train()
-    final = out / "adapter_final"
-    trainer.model.save_pretrained(final)
-    tok.save_pretrained(final)
-    (out / "training_manifest.json").write_text(json.dumps(vars(args), indent=2, ensure_ascii=False), encoding="utf-8")
+    treinador.train()
+    modelo_final = saida / "adapter_final"
+    treinador.model.save_pretrained(modelo_final)
+    tokenizador.save_pretrained(modelo_final)
+    (saida / "training_manifest.json").write_text(json.dumps(vars(argumentos), indent=2, ensure_ascii=False), encoding="utf-8")
 
-if __name__ == "__main__": main()
+if __name__ == "__main__": principal()

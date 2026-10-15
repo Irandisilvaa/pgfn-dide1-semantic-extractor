@@ -7,16 +7,16 @@ import os
 import re
 import time
 
-from .input_loader import iter_records
-from .text_utils import norm
-from .rules_jovaldo import classify as jovaldo_classify
-from .segmenter import segment, reconstruct_exact
-from .router import route
-from .teacher import call_llama
-from .workbook import write_review_workbook
+from .input_loader import iterar_registros
+from .text_utils import normalizar
+from .rules_jovaldo import classificar as classificar_jovaldo
+from .segmenter import segmentar, reconstruir_texto_exato
+from .router import rotear
+from .teacher import chamar_modelo
+from .workbook import escrever_planilha_revisao
 
 
-OPERATIVE_START = re.compile(
+INICIO_OPERATIVO = re.compile(
     r"^(?:\d+[.)]\s*)?(?:(?:diante|ante) do exposto[,;:]?\s*|isto posto[,;:]?\s*|por tais fundamentos[,;:]?\s*)?"
     r"(?:determino|defiro|indefiro|julgo|homologo|declaro|rejeito|condeno|extingo|acolho|"
     r"intime-se|intimem-se|notifique-se|cite-se|arquive-se|arquivem-se|remeta-se|remetam-se|"
@@ -26,16 +26,16 @@ OPERATIVE_START = re.compile(
 )
 
 
-def is_execucao_fiscal(record: dict) -> bool:
-    return "execucao fiscal" in norm(record.get("classe", ""))
+def eh_execucao_fiscal(registro: dict) -> bool:
+    return "execucao fiscal" in normalizar(registro.get("classe", ""))
 
 
-def _decision_hash(decision: str) -> str:
-    return hashlib.sha256((decision or "").encode("utf-8", errors="replace")).hexdigest()
+def _hash_decisao(decisao: str) -> str:
+    return hashlib.sha256((decisao or "").encode("utf-8", errors="replace")).hexdigest()
 
 
-def _category_from_text(text: str) -> str:
-    n = norm(text)
+def _categoria_por_texto(texto: str) -> str:
+    n = normalizar(texto)
     if any(v in n for v in ("julgo", "homologo", "declaro", "rejeito", "extingo", "acolho")):
         return "resultado_julgamento"
     if "honorario" in n or "custas" in n:
@@ -51,99 +51,99 @@ def _category_from_text(text: str) -> str:
     return "ordem_determinacao"
 
 
-def heuristic_rules_only(units, max_candidates=3):
-    out = []
-    for u in units:
-        if u.rejected:
+def regras_heuristicas(unidades, maximo_candidatos=3):
+    saida = []
+    for u in unidades:
+        if u.rejeitada:
             continue
-        n = norm(u.text)
-        if OPERATIVE_START.search(n):
-            out.append({
-                "unit_ids": [u.unit_id],
-                "category": _category_from_text(u.text),
+        n = normalizar(u.texto)
+        if INICIO_OPERATIVO.search(n):
+            saida.append({
+                "unit_ids": [u.id_unidade],
+                "category": _categoria_por_texto(u.texto),
                 "priority": 3,
                 "reason": "deterministic rules fallback",
             })
-        if len(out) >= max_candidates:
+        if len(saida) >= maximo_candidatos:
             break
-    return out
+    return saida
 
 
-def _fallback_score(text: str, label: str) -> int:
+def _pontuacao_fallback(texto: str, rotulo: str) -> int:
     """Fallback propositalmente conservador: prefere perder um recorte a inventar ação em narrativa."""
-    n = norm(text)
-    lead = n[:180]
-    score = 0
+    n = normalizar(texto)
+    inicio_texto = n[:180]
+    pontuacao = 0
 
-    if OPERATIVE_START.search(n):
-        score += 4
+    if INICIO_OPERATIVO.search(n):
+        pontuacao += 4
 
-    if "requisitorio" in label and "requisit" in n and any(x in n for x in ("intim", "manifest", "pagamento", "exped")):
-        score += 8
-    if "contrarrazo" in label and "contrarrazo" in n and any(x in n for x in ("intim", "manifest")):
-        score += 8
-    if "citacao" in label and any(x in lead for x in ("cite-se", "citacao", "cita", "intim")):
-        score += 8
-    if "ato ordinatorio" in label and any(x in lead for x in ("intim", "vista", "prazo", "arquiv")):
-        score += 6
-    if "sobrestamento" in label and "sobrest" in lead:
-        score += 8
-    if "prescricao" in label and "prescri" in lead and any(x in lead for x in ("declaro", "julgo", "reconhe")):
-        score += 8
-    if "sentenca" in label and any(x in lead for x in ("julgo", "homologo", "declaro", "extingo", "rejeito", "acolho", "condeno")):
-        score += 8
+    if "requisitorio" in rotulo and "requisit" in n and any(x in n for x in ("intim", "manifest", "pagamento", "exped")):
+        pontuacao += 8
+    if "contrarrazo" in rotulo and "contrarrazo" in n and any(x in n for x in ("intim", "manifest")):
+        pontuacao += 8
+    if "citacao" in rotulo and any(x in inicio_texto for x in ("cite-se", "citacao", "cita", "intim")):
+        pontuacao += 8
+    if "ato ordinatorio" in rotulo and any(x in inicio_texto for x in ("intim", "vista", "prazo", "arquiv")):
+        pontuacao += 6
+    if "sobrestamento" in rotulo and "sobrest" in inicio_texto:
+        pontuacao += 8
+    if "prescricao" in rotulo and "prescri" in inicio_texto and any(x in inicio_texto for x in ("declaro", "julgo", "reconhe")):
+        pontuacao += 8
+    if "sentenca" in rotulo and any(x in inicio_texto for x in ("julgo", "homologo", "declaro", "extingo", "rejeito", "acolho", "condeno")):
+        pontuacao += 8
 
     # Evita narrativa típica que apareceu no piloto de 100 decisões.
-    if lead.startswith(("sustenta ", "alega ", "a parte sustenta ", "a impetrante sustenta ", "a autora sustenta ")):
+    if inicio_texto.startswith(("sustenta ", "alega ", "a parte sustenta ", "a impetrante sustenta ", "a autora sustenta ")):
         return 0
-    if "foi devidamente notificada" in lead or "culminou no ato declaratorio" in lead:
-        score = max(0, score - 6)
-    return score
+    if "foi devidamente notificada" in inicio_texto or "culminou no ato declaratorio" in inicio_texto:
+        pontuacao = max(0, pontuacao - 6)
+    return pontuacao
 
 
-def _rule_fallback(units, rule, max_candidates=3):
+def _fallback_regra(unidades, regra, maximo_candidatos=3):
     """Fallback conservador quando o teacher falha; nunca força narrativa apenas por haver regra Jovaldo."""
-    label = "" if rule is None else norm(rule.label)
-    preferred = []
-    for u in units:
-        if u.rejected:
+    rotulo = "" if regra is None else normalizar(regra.rotulo)
+    preferidos = []
+    for u in unidades:
+        if u.rejeitada:
             continue
-        score = _fallback_score(u.text, label)
-        if score > 0:
-            preferred.append((score, u.start, u))
+        pontuacao = _pontuacao_fallback(u.texto, rotulo)
+        if pontuacao > 0:
+            preferidos.append((pontuacao, u.inicio, u))
 
-    preferred.sort(key=lambda x: (-x[0], x[1]))
-    out = []
-    for _, _, u in preferred[:max_candidates]:
-        out.append({
-            "unit_ids": [u.unit_id],
-            "category": _category_from_text(u.text),
+    preferidos.sort(key=lambda x: (-x[0], x[1]))
+    saida = []
+    for _, _, u in preferidos[:maximo_candidatos]:
+        saida.append({
+            "unit_ids": [u.id_unidade],
+            "category": _categoria_por_texto(u.texto),
             "priority": 2,
-            "reason": "rule fallback conservador" if rule is None else f"rule fallback: {rule.rule_id}/{rule.label}",
+            "reason": "rule fallback conservador" if regra is None else f"rule fallback: {regra.id_regra}/{regra.rotulo}",
         })
-    return out
+    return saida
 
 
-def _candidate_row(rec, d, rank, s, decision, units, rule, routing, teacher_status, teacher_attempts, teacher_response_mode, decision_sha256, cache_hit):
-    text = reconstruct_exact(decision, s["unit_ids"], units)
+def _linha_candidato(registro_atual, d, posicao, s, decisao, unidades, regra, roteamento, situacao_modelo, tentativas_modelo, modo_resposta_modelo, hash_decisao, cache_reutilizado):
+    texto = reconstruir_texto_exato(decisao, s["unit_ids"], unidades)
     return {
-        "source_row": rec.source_row,
+        "source_row": registro_atual.linha_origem,
         "Processo": d.get("processo", ""),
-        "candidate_rank": rank,
+        "candidate_rank": posicao,
         "unit_ids": json.dumps(s["unit_ids"], ensure_ascii=False),
-        "candidate_text": text,
+        "candidate_text": texto,
         "teacher_category": s["category"],
         "teacher_priority": s["priority"],
         "teacher_reason": s.get("reason", ""),
-        "rule_id": "" if rule is None else rule.rule_id,
-        "rule_label": "" if rule is None else rule.label,
-        "route_key": routing["route_key"],
-        "specialist": routing["specialist"],
-        "teacher_status": teacher_status,
-        "teacher_attempts": teacher_attempts,
-        "teacher_response_mode": teacher_response_mode,
-        "decision_sha256": decision_sha256,
-        "cache_hit": cache_hit,
+        "rule_id": "" if regra is None else regra.id_regra,
+        "rule_label": "" if regra is None else regra.rotulo,
+        "route_key": roteamento["route_key"],
+        "specialist": roteamento["specialist"],
+        "teacher_status": situacao_modelo,
+        "teacher_attempts": tentativas_modelo,
+        "teacher_response_mode": modo_resposta_modelo,
+        "decision_sha256": hash_decisao,
+        "cache_hit": cache_reutilizado,
         "status_validacao": "",
         "texto_ajustado": "",
         "categoria_ajustada": "",
@@ -153,51 +153,51 @@ def _candidate_row(rec, d, rank, s, decision, units, rule, routing, teacher_stat
     }
 
 
-def run(
-    input_xlsx: str,
-    output_dir: str,
-    limit: int | None = None,
-    start_index: int = 0,
-    sheet: str | None = None,
-    teacher_mode: str = "llama",
-    max_candidates: int = 3,
-    include_execucao_fiscal: bool = False,
-    unique_limit: int | None = None,
+def executar(
+    arquivo_entrada_xlsx: str,
+    diretorio_saida: str,
+    limite: int | None = None,
+    indice_inicial: int = 0,
+    aba: str | None = None,
+    modo_modelo: str = "llama",
+    maximo_candidatos: int = 3,
+    incluir_execucao_fiscal: bool = False,
+    limite_unicos: int | None = None,
 ):
-    outdir = Path(output_dir)
-    outdir.mkdir(parents=True, exist_ok=True)
-    pred_path = outdir / "predictions.jsonl"
-    err_path = outdir / "errors.jsonl"
-    records_out = []
-    candidates_out = []
-    errors = []
+    pasta_saida = Path(diretorio_saida)
+    pasta_saida.mkdir(parents=True, exist_ok=True)
+    caminho_predicoes = pasta_saida / "predictions.jsonl"
+    caminho_erros = pasta_saida / "errors.jsonl"
+    registros_saida = []
+    candidatos_saida = []
+    erros = []
     cache: dict[str, dict] = {}
-    unique_seen: set[str] = set()
-    scanned = 0
-    accepted = 0
-    cache_hits = 0
-    unique_inferences = 0
-    retries_ok = 0
-    rule_fallbacks = 0
-    rule_fallback_empty = 0
-    empty_valid = 0
-    skipped_empty_decisions = 0
-    started = time.time()
+    decisoes_unicas: set[str] = set()
+    varridos = 0
+    processados = 0
+    acertos_cache = 0
+    inferencias_unicas = 0
+    tentativas_recuperadas = 0
+    fallbacks_regra = 0
+    fallback_regra_vazio = 0
+    vazios_validos = 0
+    decisoes_vazias_ignoradas = 0
+    inicio_execucao = time.time()
 
-    for idx, rec in enumerate(iter_records(input_xlsx, sheet=sheet)):
-        if idx < start_index:
+    for indice, registro_atual in enumerate(iterar_registros(arquivo_entrada_xlsx, aba=aba)):
+        if indice < indice_inicial:
             continue
-        if limit is not None and scanned >= limit:
+        if limite is not None and varridos >= limite:
             break
-        if unique_limit is not None and len(unique_seen) >= unique_limit:
+        if limite_unicos is not None and len(decisoes_unicas) >= limite_unicos:
             break
 
-        scanned += 1
-        d = rec.data
+        varridos += 1
+        d = registro_atual.dados
 
-        if (not include_execucao_fiscal) and is_execucao_fiscal(d):
-            records_out.append({
-                "source_row": rec.source_row, **d,
+        if (not incluir_execucao_fiscal) and eh_execucao_fiscal(d):
+            registros_saida.append({
+                "source_row": registro_atual.linha_origem, **d,
                 "status_documento": "EXCLUIDO_EXECUCAO_FISCAL",
                 "rule_label": "", "route_key": "", "teacher_recortes_count": 0,
                 "teacher_status": "", "teacher_attempts": 0, "teacher_response_mode": "",
@@ -205,11 +205,11 @@ def run(
             })
             continue
 
-        decision = d.get("decisao", "") or ""
-        if not decision.strip():
-            skipped_empty_decisions += 1
-            records_out.append({
-                "source_row": rec.source_row, **d,
+        decisao = d.get("decisao", "") or ""
+        if not decisao.strip():
+            decisoes_vazias_ignoradas += 1
+            registros_saida.append({
+                "source_row": registro_atual.linha_origem, **d,
                 "status_documento": "SEM_DECISAO",
                 "rule_label": "", "route_key": "", "teacher_recortes_count": 0,
                 "teacher_status": "", "teacher_attempts": 0, "teacher_response_mode": "",
@@ -217,146 +217,146 @@ def run(
             })
             continue
 
-        decision_sha256 = _decision_hash(decision)
-        unique_seen.add(decision_sha256)
-        units = segment(decision)
-        rule = jovaldo_classify(decision, d.get("expediente", ""))
-        routing = route(d)
-        cache_hit = False
+        hash_decisao = _hash_decisao(decisao)
+        decisoes_unicas.add(hash_decisao)
+        unidades = segmentar(decisao)
+        regra = classificar_jovaldo(decisao, d.get("expediente", ""))
+        roteamento = rotear(d)
+        cache_reutilizado = False
 
         try:
-            if teacher_mode == "llama" and decision_sha256 in cache:
-                cached = cache[decision_sha256]
-                selected = cached["selected"]
-                teacher_status = cached["teacher_status"]
-                teacher_attempts = cached["teacher_attempts"]
-                teacher_response_mode = cached["teacher_response_mode"]
-                cache_hit = True
-                cache_hits += 1
-            elif teacher_mode == "llama":
-                unique_inferences += 1
+            if modo_modelo == "llama" and hash_decisao in cache:
+                registro_cache = cache[hash_decisao]
+                selecionados = registro_cache["selected"]
+                situacao_modelo = registro_cache["teacher_status"]
+                tentativas_modelo = registro_cache["teacher_attempts"]
+                modo_resposta_modelo = registro_cache["teacher_response_mode"]
+                cache_reutilizado = True
+                acertos_cache += 1
+            elif modo_modelo == "llama":
+                inferencias_unicas += 1
                 try:
-                    result = call_llama(d, units, routing, rule, max_candidates=max_candidates)
-                    selected = result.selected
-                    teacher_status = result.status
-                    teacher_attempts = result.attempts
-                    teacher_response_mode = result.response_mode
-                    if teacher_status == "RETRY_OK":
-                        retries_ok += 1
-                    if teacher_status == "EMPTY_VALID":
-                        empty_valid += 1
-                except Exception as teacher_exc:
-                    selected = _rule_fallback(units, rule, max_candidates=max_candidates)
-                    teacher_attempts = int(os.getenv("DIDE1_LLM_RETRIES", "1")) + 1
-                    teacher_response_mode = "fallback"
-                    if selected:
-                        teacher_status = "RULE_FALLBACK"
-                        rule_fallbacks += 1
+                    resultado = chamar_modelo(d, unidades, roteamento, regra, maximo_candidatos=maximo_candidatos)
+                    selecionados = resultado.selecionados
+                    situacao_modelo = resultado.situacao
+                    tentativas_modelo = resultado.tentativas
+                    modo_resposta_modelo = resultado.modo_resposta
+                    if situacao_modelo == "RETRY_OK":
+                        tentativas_recuperadas += 1
+                    if situacao_modelo == "EMPTY_VALID":
+                        vazios_validos += 1
+                except Exception as erro_modelo:
+                    selecionados = _fallback_regra(unidades, regra, maximo_candidatos=maximo_candidatos)
+                    tentativas_modelo = int(os.getenv("DIDE1_LLM_RETRIES", "1")) + 1
+                    modo_resposta_modelo = "fallback"
+                    if selecionados:
+                        situacao_modelo = "RULE_FALLBACK"
+                        fallbacks_regra += 1
                     else:
-                        teacher_status = "RULE_FALLBACK_EMPTY"
-                        rule_fallback_empty += 1
-                    errors.append({
-                        "source_row": rec.source_row,
+                        situacao_modelo = "RULE_FALLBACK_EMPTY"
+                        fallback_regra_vazio += 1
+                    erros.append({
+                        "source_row": registro_atual.linha_origem,
                         "processo": d.get("processo", ""),
                         "severity": "RECOVERED",
-                        "teacher_status": teacher_status,
-                        "error": repr(teacher_exc),
+                        "teacher_status": situacao_modelo,
+                        "error": repr(erro_modelo),
                     })
-                cache[decision_sha256] = {
-                    "selected": selected,
-                    "teacher_status": teacher_status,
-                    "teacher_attempts": teacher_attempts,
-                    "teacher_response_mode": teacher_response_mode,
+                cache[hash_decisao] = {
+                    "selected": selecionados,
+                    "teacher_status": situacao_modelo,
+                    "teacher_attempts": tentativas_modelo,
+                    "teacher_response_mode": modo_resposta_modelo,
                 }
-            elif teacher_mode == "rules":
-                selected = heuristic_rules_only(units, max_candidates=max_candidates)
-                teacher_status = "EMPTY_VALID" if not selected else "OK"
-                teacher_attempts = 0
-                teacher_response_mode = "rules"
+            elif modo_modelo == "rules":
+                selecionados = regras_heuristicas(unidades, maximo_candidatos=maximo_candidatos)
+                situacao_modelo = "EMPTY_VALID" if not selecionados else "OK"
+                tentativas_modelo = 0
+                modo_resposta_modelo = "rules"
             else:
                 raise ValueError("teacher_mode deve ser 'llama' ou 'rules'")
 
-            for rank, s in enumerate(selected, start=1):
-                candidates_out.append(_candidate_row(
-                    rec, d, rank, s, decision, units, rule, routing,
-                    teacher_status, teacher_attempts, teacher_response_mode,
-                    decision_sha256, cache_hit,
+            for posicao, s in enumerate(selecionados, start=1):
+                candidatos_saida.append(_linha_candidato(
+                    registro_atual, d, posicao, s, decisao, unidades, regra, roteamento,
+                    situacao_modelo, tentativas_modelo, modo_resposta_modelo,
+                    hash_decisao, cache_reutilizado,
                 ))
 
-            if not selected:
-                candidates_out.append({
-                    "source_row": rec.source_row, "Processo": d.get("processo", ""), "candidate_rank": 0,
+            if not selecionados:
+                candidatos_saida.append({
+                    "source_row": registro_atual.linha_origem, "Processo": d.get("processo", ""), "candidate_rank": 0,
                     "unit_ids": "[]", "candidate_text": "", "teacher_category": "", "teacher_priority": "", "teacher_reason": "",
-                    "rule_id": "" if rule is None else rule.rule_id, "rule_label": "" if rule is None else rule.label,
-                    "route_key": routing["route_key"], "specialist": routing["specialist"],
-                    "teacher_status": teacher_status, "teacher_attempts": teacher_attempts,
-                    "teacher_response_mode": teacher_response_mode, "decision_sha256": decision_sha256,
-                    "cache_hit": cache_hit,
+                    "rule_id": "" if regra is None else regra.id_regra, "rule_label": "" if regra is None else regra.rotulo,
+                    "route_key": roteamento["route_key"], "specialist": roteamento["specialist"],
+                    "teacher_status": situacao_modelo, "teacher_attempts": tentativas_modelo,
+                    "teacher_response_mode": modo_resposta_modelo, "decision_sha256": hash_decisao,
+                    "cache_hit": cache_reutilizado,
                     "status_validacao": "", "texto_ajustado": "", "categoria_ajustada": "", "observacao": "", "revisor": "", "revisado_em": "",
                 })
 
-            accepted += 1
-            records_out.append({
-                "source_row": rec.source_row, **d,
+            processados += 1
+            registros_saida.append({
+                "source_row": registro_atual.linha_origem, **d,
                 "status_documento": "PENDENTE_REVISAO",
-                "rule_id": "" if rule is None else rule.rule_id,
-                "rule_label": "" if rule is None else rule.label,
-                "route_key": routing["route_key"],
-                "specialist": routing["specialist"],
-                "teacher_status": teacher_status,
-                "teacher_attempts": teacher_attempts,
-                "teacher_response_mode": teacher_response_mode,
-                "decision_sha256": decision_sha256,
-                "cache_hit": cache_hit,
-                "teacher_recortes_count": len(selected),
+                "rule_id": "" if regra is None else regra.id_regra,
+                "rule_label": "" if regra is None else regra.rotulo,
+                "route_key": roteamento["route_key"],
+                "specialist": roteamento["specialist"],
+                "teacher_status": situacao_modelo,
+                "teacher_attempts": tentativas_modelo,
+                "teacher_response_mode": modo_resposta_modelo,
+                "decision_sha256": hash_decisao,
+                "cache_hit": cache_reutilizado,
+                "teacher_recortes_count": len(selecionados),
                 "observacao_documento": "", "revisor_documento": "", "revisado_em": "",
             })
         except Exception as e:
-            errors.append({
-                "source_row": rec.source_row, "processo": d.get("processo", ""),
+            erros.append({
+                "source_row": registro_atual.linha_origem, "processo": d.get("processo", ""),
                 "severity": "FATAL", "teacher_status": "ERROR", "error": repr(e),
             })
-            records_out.append({
-                "source_row": rec.source_row, **d,
+            registros_saida.append({
+                "source_row": registro_atual.linha_origem, **d,
                 "status_documento": "ERRO",
-                "rule_id": "" if rule is None else rule.rule_id,
-                "rule_label": "" if rule is None else rule.label,
-                "route_key": routing["route_key"], "specialist": routing["specialist"],
+                "rule_id": "" if regra is None else regra.id_regra,
+                "rule_label": "" if regra is None else regra.rotulo,
+                "route_key": roteamento["route_key"], "specialist": roteamento["specialist"],
                 "teacher_status": "ERROR", "teacher_attempts": 0, "teacher_response_mode": "",
-                "decision_sha256": decision_sha256, "cache_hit": cache_hit,
+                "decision_sha256": hash_decisao, "cache_hit": cache_reutilizado,
                 "teacher_recortes_count": 0,
             })
 
-    with pred_path.open("w", encoding="utf-8") as f:
-        for x in candidates_out:
+    with caminho_predicoes.open("w", encoding="utf-8") as f:
+        for x in candidatos_saida:
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
-    with err_path.open("w", encoding="utf-8") as f:
-        for x in errors:
+    with caminho_erros.open("w", encoding="utf-8") as f:
+        for x in erros:
             f.write(json.dumps(x, ensure_ascii=False) + "\n")
 
-    review_path = outdir / "review.xlsx"
-    write_review_workbook(review_path, records_out, candidates_out)
-    fatal_errors = sum(1 for e in errors if e.get("severity") == "FATAL")
-    recovered_errors = sum(1 for e in errors if e.get("severity") == "RECOVERED")
-    manifest = {
+    caminho_revisao = pasta_saida / "review.xlsx"
+    escrever_planilha_revisao(caminho_revisao, registros_saida, candidatos_saida)
+    erros_fatais = sum(1 for e in erros if e.get("severity") == "FATAL")
+    erros_recuperados = sum(1 for e in erros if e.get("severity") == "RECOVERED")
+    manifesto = {
         "version": "4.2.0-review-metrics",
-        "input": str(input_xlsx), "sheet": sheet, "teacher_mode": teacher_mode,
-        "start_index": start_index, "limit": limit, "unique_limit": unique_limit,
-        "scanned": scanned, "processed": accepted,
-        "unique_decisions": len(unique_seen),
-        "errors": fatal_errors, "recovered_errors": recovered_errors,
-        "max_candidates": max_candidates,
-        "unique_inferences": unique_inferences,
-        "cache_hits": cache_hits,
-        "teacher_retries_ok": retries_ok,
-        "rule_fallbacks": rule_fallbacks,
-        "rule_fallback_empty": rule_fallback_empty,
-        "empty_valid": empty_valid,
-        "skipped_empty_decisions": skipped_empty_decisions,
-        "elapsed_seconds": round(time.time() - started, 3),
-        "review_workbook": str(review_path),
+        "input": str(arquivo_entrada_xlsx), "sheet": aba, "teacher_mode": modo_modelo,
+        "start_index": indice_inicial, "limit": limite, "unique_limit": limite_unicos,
+        "scanned": varridos, "processed": processados,
+        "unique_decisions": len(decisoes_unicas),
+        "errors": erros_fatais, "recovered_errors": erros_recuperados,
+        "max_candidates": maximo_candidatos,
+        "unique_inferences": inferencias_unicas,
+        "cache_hits": acertos_cache,
+        "teacher_retries_ok": tentativas_recuperadas,
+        "rule_fallbacks": fallbacks_regra,
+        "rule_fallback_empty": fallback_regra_vazio,
+        "empty_valid": vazios_validos,
+        "skipped_empty_decisions": decisoes_vazias_ignoradas,
+        "elapsed_seconds": round(time.time() - inicio_execucao, 3),
+        "review_workbook": str(caminho_revisao),
         "review_sheet": "revisao_consolidada",
         "metrics_sheet": "metricas",
     }
-    (outdir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest
+    (pasta_saida / "manifest.json").write_text(json.dumps(manifesto, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifesto

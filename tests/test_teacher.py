@@ -1,34 +1,34 @@
-from dide1.teacher import _parse_json, _extract_selected, _expand_parent_units
-from dide1.segmenter import segment
+from dide1.teacher import _ler_json, _extrair_selecoes, _expandir_unidades_pai
+from dide1.segmenter import segmentar
 
 
-def test_teacher_accepts_top_level_list():
-    data = _parse_json('[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"ok"}]')
-    selected, note = _extract_selected(data)
-    assert len(selected) == 1
-    assert note == "top_level_list"
+def test_modelo_aceita_lista_no_nivel_principal():
+    dados = _ler_json('[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"ok"}]')
+    selecionados, observacao = _extrair_selecoes(dados)
+    assert len(selecionados) == 1
+    assert observacao == "top_level_list"
 
 
-def test_teacher_accepts_selected_object():
-    data = _parse_json('{"selected":[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"ok"}]}')
-    selected, note = _extract_selected(data)
-    assert len(selected) == 1
-    assert note == "selected_object"
+def test_modelo_aceita_objeto_selected():
+    dados = _ler_json('{"selected":[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"ok"}]}')
+    selecionados, observacao = _extrair_selecoes(dados)
+    assert len(selecionados) == 1
+    assert observacao == "selected_object"
 
 
-def test_teacher_parses_fenced_json():
-    data = _parse_json('```json\n{"selected": []}\n```')
-    assert data == {"selected": []}
+def test_modelo_le_json_com_bloco_markdown():
+    dados = _ler_json('```json\n{"selected": []}\n```')
+    assert dados == {"selected": []}
 
 
-def test_parent_order_is_added_to_list():
-    text = "DETERMINO que a contadoria faça os cálculos, devendo considerar:\n\na) o período correto;\nb) os índices legais."
-    units = segment(text)
-    assert len(units) == 2
-    ids = _expand_parent_units([units[1].unit_id], units)
-    assert ids == [units[0].unit_id, units[1].unit_id]
+def test_ordem_principal_e_adicionada_a_lista():
+    texto = "DETERMINO que a contadoria faça os cálculos, devendo considerar:\n\na) o período correto;\nb) os índices legais."
+    unidades = segmentar(texto)
+    assert len(unidades) == 2
+    ids = _expandir_unidades_pai([unidades[1].id_unidade], unidades)
+    assert ids == [unidades[0].id_unidade, unidades[1].id_unidade]
 
 
-def test_extract_selected_ignores_non_dict_items():
-    selected, _ = _extract_selected([{"unit_ids": ["U0001"]}, "junk", 3])
-    assert selected == [{"unit_ids": ["U0001"]}]
+def test_extracao_ignora_itens_que_nao_sao_objetos():
+    selecionados, _ = _extrair_selecoes([{"unit_ids": ["U0001"]}, "junk", 3])
+    assert selecionados == [{"unit_ids": ["U0001"]}]

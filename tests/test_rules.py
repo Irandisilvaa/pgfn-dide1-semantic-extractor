@@ -1,13 +1,13 @@
-from dide1.rules_jovaldo import classify
+from dide1.rules_jovaldo import classificar
 
-def test_jovaldo_order_migration():
-    m = classify("O presente processo foi migrado para este sistema eletrônico", "Sentença")
-    assert m.rule_id == "J01"
+def test_ordem_jovaldo_migracao():
+    m = classificar("O presente processo foi migrado para este sistema eletrônico", "Sentença")
+    assert m.id_regra == "J01"
 
-def test_exp_sentence():
-    m = classify("texto qualquer", "Sentença")
-    assert m.label == "sentença"
+def test_expediente_sentenca():
+    m = classificar("texto qualquer", "Sentença")
+    assert m.rotulo == "sentença"
 
-def test_contrarrazones():
-    m = classify("texto", "Intimação para Contrarrazões")
-    assert m.label == "contrarrazões"
+def test_contrarrazoes():
+    m = classificar("texto", "Intimação para Contrarrazões")
+    assert m.rotulo == "contrarrazões"

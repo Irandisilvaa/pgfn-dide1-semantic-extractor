@@ -1,7 +1,7 @@
-from dide1.segmenter import segment, reconstruct_exact
+from dide1.segmenter import segmentar, reconstruir_texto_exato
 
-def test_reconstruct_exact():
+def test_reconstrucao_exata():
     t = "RELATÓRIO\n\nNada.\n\nDISPOSITIVO\n\nIntime-se a União.\n\nApós, arquivem-se."
-    u = segment(t)
-    ids = [x.unit_id for x in u if "Intime-se" in x.text]
-    assert reconstruct_exact(t, ids, u) == "Intime-se a União."
+    u = segmentar(t)
+    ids = [x.id_unidade for x in u if "Intime-se" in x.texto]
+    assert reconstruir_texto_exato(t, ids, u) == "Intime-se a União."

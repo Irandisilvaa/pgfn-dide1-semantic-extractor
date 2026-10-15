@@ -8,11 +8,11 @@ from typing import Any
 
 import requests
 
-from .constants import CATEGORIES
-from .text_utils import norm
+from .constants import CATEGORIAS
+from .text_utils import normalizar
 
 
-SYSTEM = """Você é o teacher local do projeto DIDE1/PGFN. Sua função é selecionar, de modo conservador, unidades textuais da DECISÃO ATUAL que contenham informação juridicamente acionável para a triagem/defesa cível.
+PROMPT_SISTEMA = """Você é o teacher local do projeto DIDE1/PGFN. Sua função é selecionar, de modo conservador, unidades textuais da DECISÃO ATUAL que contenham informação juridicamente acionável para a triagem/defesa cível.
 
 Regras obrigatórias:
 1) Selecione somente IDs fornecidos. Nunca reescreva nem invente texto.
@@ -24,85 +24,85 @@ Regras obrigatórias:
 7) Quando uma ordem termina em ':' e os itens seguintes (a, b, c... ou 1, 2, 3...) completam a ordem, selecione a unidade da ordem-mãe JUNTO com os itens necessários para formar um recorte autocontido.
 8) O trecho precisa ser autocontido e acionável. Evite fragmentos órfãos.
 9) Use 'tutela' somente para tutela provisória/urgência/evidência, liminar, suspensão ou providência de natureza cautelar. Um simples 'defiro' não transforma a ordem em tutela.
-10) Retorne no máximo {max_candidates} seleções.
+10) Retorne no máximo {maximo_candidatos} seleções.
 11) Retorne JSON puro, sem markdown, preferencialmente no formato {{"selected": [...]}}.
 """
 
 # Usado quando a primeira resposta não vem em JSON válido.
-RETRY_SUFFIX = """Sua resposta precisa ser JSON válido e conter apenas seleções baseadas nos IDs fornecidos. Use exatamente o formato {"selected":[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"curto"}]}. Se não houver recorte válido, use {"selected":[]}."""
+PROMPT_NOVA_TENTATIVA = """Sua resposta precisa ser JSON válido e conter apenas seleções baseadas nos IDs fornecidos. Use exatamente o formato {"selected":[{"unit_ids":["U0001"],"category":"ordem_determinacao","priority":1,"reason":"curto"}]}. Se não houver recorte válido, use {"selected":[]}."""
 
 
-class TeacherParseError(ValueError):
+class ErroLeituraModelo(ValueError):
     pass
 
 
 @dataclass
-class TeacherResult:
-    selected: list[dict]
-    status: str
-    attempts: int
-    response_mode: str
-    parse_note: str = ""
+class ResultadoModelo:
+    selecionados: list[dict]
+    situacao: str
+    tentativas: int
+    modo_resposta: str
+    observacao_leitura: str = ""
 
 
 # Converte a resposta do modelo em JSON, tolerando pequenos desvios de formato.
-def _parse_json(text: str) -> Any:
+def _ler_json(texto: str) -> Any:
     """Parse JSON tolerando fences e um pequeno prefixo/sufixo textual."""
-    text = (text or "").strip()
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I | re.S).strip()
+    texto = (texto or "").strip()
+    texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto, flags=re.I | re.S).strip()
 
-    if not text:
-        raise TeacherParseError("resposta vazia")
+    if not texto:
+        raise ErroLeituraModelo("resposta vazia")
 
     try:
-        return json.loads(text)
+        return json.loads(texto)
 
     except Exception:
-        decoder = json.JSONDecoder()
-        starts = [i for i, ch in enumerate(text) if ch in "[{"]
+        decodificador = json.JSONDecoder()
+        inicios = [i for i, caractere in enumerate(texto) if caractere in "[{"]
 
-        for i in starts:
+        for i in inicios:
             try:
-                obj, _ = decoder.raw_decode(text[i:])
-                return obj
+                objeto, _ = decodificador.raw_decode(texto[i:])
+                return objeto
             except Exception:
                 continue
 
-        raise TeacherParseError("resposta sem JSON decodificável")
+        raise ErroLeituraModelo("resposta sem JSON decodificável")
 
 
-def _extract_selected(data: Any) -> tuple[list[dict], str]:
+def _extrair_selecoes(dados: Any) -> tuple[list[dict], str]:
     """Aceita tanto {selected:[...]} quanto [...] diretamente."""
-    if isinstance(data, list):
-        raw = data
-        note = "top_level_list"
+    if isinstance(dados, list):
+        bruto = dados
+        observacao = "top_level_list"
 
-    elif isinstance(data, dict):
-        raw = data.get("selected", [])
-        note = "selected_object"
+    elif isinstance(dados, dict):
+        bruto = dados.get("selected", [])
+        observacao = "selected_object"
 
     else:
-        raise TeacherParseError(
-            f"tipo JSON inesperado: {type(data).__name__}"
+        raise ErroLeituraModelo(
+            f"tipo JSON inesperado: {type(dados).__name__}"
         )
 
-    if raw is None:
-        return [], note
+    if bruto is None:
+        return [], observacao
 
-    if isinstance(raw, dict):
-        raw = [raw]
-        note += ":single_object_wrapped"
+    if isinstance(bruto, dict):
+        bruto = [bruto]
+        observacao += ":single_object_wrapped"
 
-    if not isinstance(raw, list):
-        raise TeacherParseError("campo selected não é lista")
+    if not isinstance(bruto, list):
+        raise ErroLeituraModelo("campo selected não é lista")
 
-    items = [x for x in raw if isinstance(x, dict)]
+    itens = [x for x in bruto if isinstance(x, dict)]
 
-    return items, note
+    return itens, observacao
 
 
 # Restringe a resposta do modelo ao formato e às categorias aceitas pelo projeto.
-def _response_format(max_candidates: int) -> dict:
+def _formato_resposta(maximo_candidatos: int) -> dict:
     return {
         "type": "json_schema",
         "json_schema": {
@@ -113,7 +113,7 @@ def _response_format(max_candidates: int) -> dict:
                 "properties": {
                     "selected": {
                         "type": "array",
-                        "maxItems": max_candidates,
+                        "maxItems": maximo_candidatos,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -124,7 +124,7 @@ def _response_format(max_candidates: int) -> dict:
                                 },
                                 "category": {
                                     "type": "string",
-                                    "enum": list(CATEGORIES)
+                                    "enum": list(CATEGORIAS)
                                 },
                                 "priority": {
                                     "type": "integer",
@@ -153,76 +153,76 @@ def _response_format(max_candidates: int) -> dict:
 
 
 # Faz a chamada ao servidor local e tenta formatos de resposta mais simples se necessário.
-def _post_completion(
-    base: str,
-    payload: dict,
-    timeout: int
+def _enviar_requisicao(
+    endereco_base: str,
+    dados_requisicao: dict,
+    tempo_limite: int
 ) -> tuple[str, str]:
 
-    modes = (
+    modos = (
         "json_schema",
         "json_object",
         "plain"
     )
 
-    last_exc: Exception | None = None
+    ultimo_erro: Exception | None = None
 
-    for mode in modes:
-        body = dict(payload)
+    for modo in modos:
+        corpo = dict(dados_requisicao)
 
-        if mode == "json_schema":
-            body["response_format"] = _response_format(
-                body.pop("_max_candidates")
+        if modo == "json_schema":
+            corpo["response_format"] = _formato_resposta(
+                corpo.pop("_max_candidates")
             )
 
-        elif mode == "json_object":
-            body.pop("_max_candidates", None)
-            body["response_format"] = {
+        elif modo == "json_object":
+            corpo.pop("_max_candidates", None)
+            corpo["response_format"] = {
                 "type": "json_object"
             }
 
         else:
-            body.pop("_max_candidates", None)
+            corpo.pop("_max_candidates", None)
 
         try:
-            r = requests.post(
-                base + "/v1/chat/completions",
-                json=body,
-                timeout=timeout
+            resposta = requests.post(
+                endereco_base + "/v1/chat/completions",
+                json=corpo,
+                timeout=tempo_limite
             )
 
             if (
-                mode != "plain"
-                and r.status_code in {400, 404, 415, 422}
+                modo != "plain"
+                and resposta.status_code in {400, 404, 415, 422}
             ):
-                last_exc = requests.HTTPError(
-                    f"response_format {mode} não suportado: HTTP {r.status_code}"
+                ultimo_erro = requests.HTTPError(
+                    f"response_format {modo} não suportado: HTTP {resposta.status_code}"
                 )
                 continue
 
-            r.raise_for_status()
+            resposta.raise_for_status()
 
             return (
-                r.json()["choices"][0]["message"]["content"],
-                mode
+                resposta.json()["choices"][0]["message"]["content"],
+                modo
             )
 
         except requests.RequestException as exc:
-            last_exc = exc
+            ultimo_erro = exc
 
-            if mode == "plain":
+            if modo == "plain":
                 raise
 
-    if last_exc:
-        raise last_exc
+    if ultimo_erro:
+        raise ultimo_erro
 
     raise RuntimeError(
         "falha inesperada na chamada ao teacher"
     )
 
 
-def _is_list_like(text: str) -> bool:
-    t = (text or "").lstrip()
+def _parece_item_lista(texto: str) -> bool:
+    t = (texto or "").lstrip()
 
     return bool(
         re.match(
@@ -232,11 +232,11 @@ def _is_list_like(text: str) -> bool:
     )
 
 
-def _is_action_parent(text: str) -> bool:
-    n = norm(text or "")
+def _eh_ordem_principal(texto: str) -> bool:
+    n = normalizar(texto or "")
 
     return bool(
-        (text or "").rstrip().endswith(":")
+        (texto or "").rstrip().endswith(":")
         and any(
             v in n
             for v in (
@@ -258,73 +258,73 @@ def _is_action_parent(text: str) -> bool:
 
 
 # Se o modelo escolher somente itens de uma lista, inclui a ordem que dá sentido a eles.
-def _expand_parent_units(
+def _expandir_unidades_pai(
     ids: list[str],
-    units
+    unidades
 ) -> list[str]:
 
-    by_id = {
-        u.unit_id: u
-        for u in units
+    unidade_por_id = {
+        u.id_unidade: u
+        for u in unidades
     }
 
-    index = {
-        u.unit_id: i
-        for i, u in enumerate(units)
+    posicao_por_id = {
+        u.id_unidade: i
+        for i, u in enumerate(unidades)
     }
 
-    valid = [
+    validos = [
         x
         for x in ids
-        if x in by_id
+        if x in unidade_por_id
     ]
 
-    if not valid:
+    if not validos:
         return []
 
-    ordered = sorted(
-        dict.fromkeys(valid),
-        key=lambda x: index[x]
+    ids_ordenados = sorted(
+        dict.fromkeys(validos),
+        key=lambda x: posicao_por_id[x]
     )
 
-    first = by_id[ordered[0]]
+    primeira_unidade = unidade_por_id[ids_ordenados[0]]
 
-    if _is_list_like(first.text):
-        i = index[first.unit_id]
+    if _parece_item_lista(primeira_unidade.texto):
+        i = posicao_por_id[primeira_unidade.id_unidade]
 
         if i > 0:
-            prev = units[i - 1]
+            unidade_anterior = unidades[i - 1]
 
             if (
-                prev.rejected is None
-                and _is_action_parent(prev.text)
+                unidade_anterior.rejeitada is None
+                and _eh_ordem_principal(unidade_anterior.texto)
             ):
-                ordered.insert(
+                ids_ordenados.insert(
                     0,
-                    prev.unit_id
+                    unidade_anterior.id_unidade
                 )
 
-    return ordered
+    return ids_ordenados
 
 
 # Corrige categorias claramente incompatíveis com o conteúdo selecionado.
-def _normalize_category(
-    category: str,
+def _normalizar_categoria(
+    categoria: str,
     ids: list[str],
-    units
+    unidades
 ) -> str:
 
-    text = "\n".join(
-        u.text
-        for u in units
-        if u.unit_id in set(ids)
+    texto = "\n".join(
+        u.texto
+        for u in unidades
+        if u.id_unidade in set(ids)
     )
 
-    n = norm(text)
-    cat = category
+    n = normalizar(texto)
+    categoria_final = categoria
 
     if (
-        cat == "tutela"
+        categoria_final == "tutela"
         and not any(
             k in n
             for k in (
@@ -346,114 +346,114 @@ def _normalize_category(
                 "pericia"
             )
         ):
-            cat = "ordem_determinacao"
+            categoria_final = "ordem_determinacao"
 
-    return cat
+    return categoria_final
 
 
 # Valida a saída do modelo antes de transformá-la em resultado do projeto.
-def _validate_items(
-    items: list[dict],
-    visible,
-    all_units,
-    max_candidates: int
+def _validar_itens(
+    itens: list[dict],
+    unidades_visiveis,
+    todas_unidades,
+    maximo_candidatos: int
 ) -> list[dict]:
 
-    valid_ids = {
-        u.unit_id
-        for u in visible
+    ids_validos = {
+        u.id_unidade
+        for u in unidades_visiveis
     }
 
-    out: list[dict] = []
-    seen: set[tuple] = set()
+    saida: list[dict] = []
+    ja_processados: set[tuple] = set()
 
-    for item in items:
-        raw_ids = item.get(
+    for item in itens:
+        ids_brutos = item.get(
             "unit_ids",
             []
         )
 
         if isinstance(
-            raw_ids,
+            ids_brutos,
             str
         ):
-            raw_ids = [
-                raw_ids
+            ids_brutos = [
+                ids_brutos
             ]
 
         if not isinstance(
-            raw_ids,
+            ids_brutos,
             list
         ):
             continue
 
         ids = [
             str(x)
-            for x in raw_ids
-            if str(x) in valid_ids
+            for x in ids_brutos
+            if str(x) in ids_validos
         ]
 
-        ids = _expand_parent_units(
+        ids = _expandir_unidades_pai(
             ids,
-            all_units
+            todas_unidades
         )
 
         ids = [
             x
             for x in ids
-            if x in valid_ids
+            if x in ids_validos
         ]
 
-        cat = item.get(
+        categoria_final = item.get(
             "category"
         )
 
         if (
             not ids
-            or cat not in CATEGORIES
+            or categoria_final not in CATEGORIAS
         ):
             continue
 
-        cat = _normalize_category(
-            cat,
+        categoria_final = _normalizar_categoria(
+            categoria_final,
             ids,
-            all_units
+            todas_unidades
         )
 
         try:
-            priority = int(
+            prioridade = int(
                 item.get(
                     "priority",
                     3
                 )
             )
         except Exception:
-            priority = 3
+            prioridade = 3
 
-        priority = max(
+        prioridade = max(
             1,
             min(
                 4,
-                priority
+                prioridade
             )
         )
 
-        key = (
+        chave = (
             tuple(ids),
-            cat
+            categoria_final
         )
 
-        if key in seen:
+        if chave in ja_processados:
             continue
 
-        seen.add(
-            key
+        ja_processados.add(
+            chave
         )
 
-        out.append({
+        saida.append({
             "unit_ids": ids,
-            "category": cat,
-            "priority": priority,
+            "category": categoria_final,
+            "priority": prioridade,
             "reason": str(
                 item.get(
                     "reason",
@@ -462,39 +462,39 @@ def _validate_items(
             )[:300],
         })
 
-        if len(out) >= max_candidates:
+        if len(saida) >= maximo_candidatos:
             break
 
-    return out
+    return saida
 
 
 #  monta o contexto, chama o Qwen e devolve os recortes validados.
-def call_llama(
-    record,
-    units,
-    routing,
-    rule_match,
-    max_candidates=3
-) -> TeacherResult:
+def chamar_modelo(
+    registro,
+    unidades,
+    roteamento,
+    regra_encontrada,
+    maximo_candidatos=3
+) -> ResultadoModelo:
 
-    base = os.getenv(
+    endereco_base = os.getenv(
         "DIDE1_LLM_BASE_URL",
         "http://127.0.0.1:8081"
     ).rstrip("/")
 
-    model = os.getenv(
+    modelo = os.getenv(
         "DIDE1_LLM_MODEL",
         "Qwen3.5-9B"
     )
 
-    timeout = int(
+    tempo_limite = int(
         os.getenv(
             "DIDE1_LLM_TIMEOUT",
             "180"
         )
     )
 
-    retries = max(
+    novas_tentativas = max(
         0,
         int(
             os.getenv(
@@ -505,58 +505,58 @@ def call_llama(
     )
 
     # Só envia ao modelo as unidades que passaram pelos filtros anteriores.
-    visible = [
+    unidades_visiveis = [
         u
-        for u in units
-        if not u.rejected
+        for u in unidades
+        if not u.rejeitada
     ]
 
     # Cada trecho recebe um ID. O modelo escolhe IDs em vez de reescrever a decisão.
-    unit_text = "\n".join(
-        f"[{u.unit_id}] ({u.section}) {u.text}"
-        for u in visible
+    texto_unidades = "\n".join(
+        f"[{u.id_unidade}] ({u.secao}) {u.texto}"
+        for u in unidades_visiveis
     )
 
     # Se uma regra determinística tiver sido identificada, ela é enviada como contexto.
-    rule_hint = (
+    dica_regra = (
         None
-        if rule_match is None
+        if regra_encontrada is None
         else {
-            "rule_id": rule_match.rule_id,
-            "label": rule_match.label
+            "rule_id": regra_encontrada.id_regra,
+            "label": regra_encontrada.rotulo
         }
     )
 
-    user = {
+    mensagem_usuario = {
         "contexto": {
-            "processo": record.get(
+            "processo": registro.get(
                 "processo"
             ),
-            "classe": record.get(
+            "classe": registro.get(
                 "classe"
             ),
-            "orgao_julgador": record.get(
+            "orgao_julgador": registro.get(
                 "orgao_julgador"
             ),
-            "expediente": record.get(
+            "expediente": registro.get(
                 "expediente"
             ),
-            "assunto": record.get(
+            "assunto": registro.get(
                 "assunto"
             ),
-            "secao_subsecao": record.get(
+            "secao_subsecao": registro.get(
                 "secao_subsecao"
             ),
-            "nucleo": record.get(
+            "nucleo": registro.get(
                 "nucleo"
             ),
-            "routing": routing,
-            "regra_previa": rule_hint,
+            "routing": roteamento,
+            "regra_previa": dica_regra,
         },
 
-        "categorias_permitidas": CATEGORIES,
+        "categorias_permitidas": CATEGORIAS,
 
-        "unidades": unit_text,
+        "unidades": texto_unidades,
 
         "formato": {
             "selected": [
@@ -572,101 +572,101 @@ def call_llama(
         },
     }
 
-    base_messages = [
+    mensagens_base = [
         {
             "role": "system",
-            "content": SYSTEM.format(
-                max_candidates=max_candidates
+            "content": PROMPT_SISTEMA.format(
+                maximo_candidatos=maximo_candidatos
             )
         },
         {
             "role": "user",
             "content": json.dumps(
-                user,
+                mensagem_usuario,
                 ensure_ascii=False
             )
         },
     ]
 
-    last_exc: Exception | None = None
+    ultimo_erro: Exception | None = None
 
-    for attempt in range(
+    for tentativa in range(
         1,
-        retries + 2
+        novas_tentativas + 2
     ):
-        messages = list(
-            base_messages
+        mensagens = list(
+            mensagens_base
         )
 
-        if attempt > 1:
-            messages.append({
+        if tentativa > 1:
+            mensagens.append({
                 "role": "user",
-                "content": RETRY_SUFFIX
+                "content": PROMPT_NOVA_TENTATIVA
             })
 
         # Temperatura zero ajuda a reduzir variação entre execuções.
-        payload = {
-            "model": model,
-            "messages": messages,
+        dados_requisicao = {
+            "model": modelo,
+            "messages": mensagens,
             "temperature": 0.0,
             "top_p": 0.9,
             "max_tokens": 900,
-            "_max_candidates": max_candidates,
+            "_max_candidates": maximo_candidatos,
         }
 
         try:
-            content, mode = _post_completion(
-                base,
-                payload,
-                timeout
+            conteudo, modo = _enviar_requisicao(
+                endereco_base,
+                dados_requisicao,
+                tempo_limite
             )
 
-            data = _parse_json(
-                content
+            dados = _ler_json(
+                conteudo
             )
 
-            items, note = _extract_selected(
-                data
+            itens, observacao = _extrair_selecoes(
+                dados
             )
 
-            selected = _validate_items(
-                items,
-                visible,
-                units,
-                max_candidates
+            selecionados = _validar_itens(
+                itens,
+                unidades_visiveis,
+                unidades,
+                maximo_candidatos
             )
 
-            status = (
+            situacao = (
                 "RETRY_OK"
-                if attempt > 1
+                if tentativa > 1
                 else (
                     "EMPTY_VALID"
-                    if not selected
+                    if not selecionados
                     else "OK"
                 )
             )
 
-            return TeacherResult(
-                selected=selected,
-                status=status,
-                attempts=attempt,
-                response_mode=mode,
-                parse_note=note
+            return ResultadoModelo(
+                selecionados=selecionados,
+                situacao=situacao,
+                tentativas=tentativa,
+                modo_resposta=modo,
+                observacao_leitura=observacao
             )
 
         except (
-            TeacherParseError,
+            ErroLeituraModelo,
             KeyError,
             TypeError,
             ValueError,
             requests.RequestException
         ) as exc:
-            last_exc = exc
+            ultimo_erro = exc
             continue
 
-    if last_exc:
-        raise last_exc
+    if ultimo_erro:
+        raise ultimo_erro
 
-    raise TeacherParseError(
+    raise ErroLeituraModelo(
         "falha não especificada no teacher"
     )

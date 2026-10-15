@@ -11,239 +11,239 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from .constants import CATEGORIES
+from .constants import CATEGORIAS
 
-HEADER_FILL = "1F4E78"
-HEADER_FONT = "FFFFFF"
-CONTEXT_FILL = "D9EAF7"
-CANDIDATE_FILL = "E2F0D9"
-HUMAN_FILL = "FFF2CC"
-STATUS_FILL = "EDEDED"
-KPI_FILL = "DDEBF7"
-WARN_FILL = "FCE4D6"
-GREEN_FILL = "C6EFCE"
-ORANGE_FILL = "FCE4D6"
-RED_FILL = "FFC7CE"
-YELLOW_FILL = "FFF2CC"
+PREENCHIMENTO_CABECALHO = "1F4E78"
+FONTE_CABECALHO = "FFFFFF"
+PREENCHIMENTO_CONTEXTO = "D9EAF7"
+PREENCHIMENTO_CANDIDATO = "E2F0D9"
+PREENCHIMENTO_HUMANO = "FFF2CC"
+PREENCHIMENTO_STATUS = "EDEDED"
+PREENCHIMENTO_KPI = "DDEBF7"
+PREENCHIMENTO_ALERTA = "FCE4D6"
+PREENCHIMENTO_VERDE = "C6EFCE"
+PREENCHIMENTO_LARANJA = "FCE4D6"
+PREENCHIMENTO_VERMELHO = "FFC7CE"
+PREENCHIMENTO_AMARELO = "FFF2CC"
 
-CANDIDATE_STATUS = ["PENDENTE", "APROVADO", "AJUSTADO", "REJEITADO"]
-DOCUMENT_STATUS = ["PENDENTE_REVISAO", "VALIDADO_COMPLETO"]
+STATUS_CANDIDATO = ["PENDENTE", "APROVADO", "AJUSTADO", "REJEITADO"]
+STATUS_DOCUMENTO = ["PENDENTE_REVISAO", "VALIDADO_COMPLETO"]
 
 
-def _rows_dict(ws):
-    it = ws.iter_rows(values_only=True)
+def _linhas_como_dicionario(planilha):
+    item = planilha.iter_rows(values_only=True)
     try:
-        headers = list(next(it))
+        cabecalhos = list(next(item))
     except StopIteration:
         return
-    for row in it:
-        yield {h: row[i] if i < len(row) else None for i, h in enumerate(headers)}
+    for linha in item:
+        yield {h: linha[i] if i < len(linha) else None for i, h in enumerate(cabecalhos)}
 
 
-def _style_header(ws):
-    for cell in ws[1]:
-        cell.font = Font(bold=True, color=HEADER_FONT)
-        cell.fill = PatternFill("solid", fgColor=HEADER_FILL)
-        cell.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+def _estilizar_cabecalho(planilha):
+    for celula in planilha[1]:
+        celula.font = Font(bold=True, color=FONTE_CABECALHO)
+        celula.fill = PatternFill("solid", fgColor=PREENCHIMENTO_CABECALHO)
+        celula.alignment = Alignment(vertical="top", wrap_text=True)
+    planilha.freeze_panes = "A2"
+    planilha.auto_filter.ref = planilha.dimensions
 
 
-def _add_validation_list(ws, cell_range: str, formula: str):
-    dv = DataValidation(type="list", formula1=formula, allow_blank=False)
-    dv.error = "Escolha um valor da lista."
-    dv.errorTitle = "Valor inválido"
-    dv.prompt = "Selecione uma das opções disponíveis."
-    dv.promptTitle = "Preenchimento padronizado"
-    dv.showInputMessage = True
-    dv.showErrorMessage = True
-    ws.add_data_validation(dv)
-    dv.add(cell_range)
+def _adicionar_lista_validacao(planilha, intervalo_celulas: str, formula: str):
+    validacao_dados = DataValidation(type="list", formula1=formula, allow_blank=False)
+    validacao_dados.error = "Escolha um valor da lista."
+    validacao_dados.errorTitle = "Valor inválido"
+    validacao_dados.prompt = "Selecione uma das opções disponíveis."
+    validacao_dados.promptTitle = "Preenchimento padronizado"
+    validacao_dados.showInputMessage = True
+    validacao_dados.showErrorMessage = True
+    planilha.add_data_validation(validacao_dados)
+    validacao_dados.add(intervalo_celulas)
 
 
-def _sheet(ws, rows):
-    if not rows:
+def _preencher_aba(planilha, linhas):
+    if not linhas:
         return
-    headers = list(rows[0].keys())
-    ws.append(headers)
-    for r in rows:
-        ws.append([r.get(h, "") for h in headers])
-    _style_header(ws)
-    for idx, h in enumerate(headers, start=1):
-        width = 18
+    cabecalhos = list(linhas[0].keys())
+    planilha.append(cabecalhos)
+    for r in linhas:
+        planilha.append([r.get(h, "") for h in cabecalhos])
+    _estilizar_cabecalho(planilha)
+    for indice, h in enumerate(cabecalhos, start=1):
+        largura = 18
         if h in {"decisao", "candidate_text", "teacher_reason", "observacao", "observacao_documento", "texto_ajustado"}:
-            width = 55
-        ws.column_dimensions[get_column_letter(idx)].width = width
-    for row in ws.iter_rows():
-        for c in row:
+            largura = 55
+        planilha.column_dimensions[get_column_letter(indice)].width = largura
+    for linha in planilha.iter_rows():
+        for c in linha:
             c.alignment = Alignment(vertical="top", wrap_text=False)
 
 
-def _decision_key(d: dict) -> str:
+def _chave_decisao(d: dict) -> str:
     return str(d.get("decision_sha256") or f"source_row:{d.get('source_row')}")
 
 
-def _build_groups(decisions: list[dict], candidates: list[dict]):
-    decisions_by_hash: dict[str, list[dict]] = defaultdict(list)
-    for d in decisions:
-        decisions_by_hash[_decision_key(d)].append(d)
+def _construir_grupos(decisoes: list[dict], candidatos: list[dict]):
+    decisoes_por_hash: dict[str, list[dict]] = defaultdict(list)
+    for d in decisoes:
+        decisoes_por_hash[_chave_decisao(d)].append(d)
 
-    source_to_hash = {}
-    for h, ds in decisions_by_hash.items():
-        for d in ds:
-            source_to_hash[str(d.get("source_row"))] = h
+    hash_por_linha_origem = {}
+    for h, grupo_decisoes in decisoes_por_hash.items():
+        for d in grupo_decisoes:
+            hash_por_linha_origem[str(d.get("source_row"))] = h
 
-    candidates_by_hash: dict[str, list[dict]] = defaultdict(list)
-    for c in candidates:
-        h = str(c.get("decision_sha256") or source_to_hash.get(str(c.get("source_row")), f"source_row:{c.get('source_row')}"))
-        candidates_by_hash[h].append(c)
-    return decisions_by_hash, candidates_by_hash
+    candidatos_por_hash: dict[str, list[dict]] = defaultdict(list)
+    for c in candidatos:
+        h = str(c.get("decision_sha256") or hash_por_linha_origem.get(str(c.get("source_row")), f"source_row:{c.get('source_row')}"))
+        candidatos_por_hash[h].append(c)
+    return decisoes_por_hash, candidatos_por_hash
 
 
-def _prior_annotations(prior_rows: list[dict] | None) -> dict[str, dict]:
-    out: dict[str, dict] = {}
-    for r in prior_rows or []:
+def _anotacoes_anteriores(linhas_anteriores: list[dict] | None) -> dict[str, dict]:
+    saida: dict[str, dict] = {}
+    for r in linhas_anteriores or []:
         h = str(r.get("_decision_sha256") or r.get("decision_sha256") or "").strip()
         if h:
-            out[h] = r
-    return out
+            saida[h] = r
+    return saida
 
 
-def _build_review_rows(
-    decisions: list[dict],
-    candidates: list[dict],
-    slots: int,
-    prior_rows: list[dict] | None = None,
+def _construir_linhas_revisao(
+    decisoes: list[dict],
+    candidatos: list[dict],
+    quantidade_recortes: int,
+    linhas_anteriores: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Cria a interface humana compacta e uma tabela técnica 1:1 por decisão.
 
     A interface mostra apenas contexto necessário + recortes/categorias editáveis + dropdowns.
     Toda a proveniência fica em dados_tecnicos, escondida dos revisores.
     """
-    decisions_by_hash, candidates_by_hash = _build_groups(decisions, candidates)
-    prior = _prior_annotations(prior_rows)
+    decisoes_por_hash, candidatos_por_hash = _construir_grupos(decisoes, candidatos)
+    anotacoes_previas = _anotacoes_anteriores(linhas_anteriores)
 
-    review_rows: list[dict] = []
-    technical_rows: list[dict] = []
+    linhas_revisao: list[dict] = []
+    linhas_tecnicas: list[dict] = []
 
-    for seq, (h, ds) in enumerate(decisions_by_hash.items(), start=1):
-        rep = ds[0]
-        decision_id = f"D{seq:04d}"
-        source_rows = [str(d.get("source_row")) for d in ds if d.get("source_row") not in (None, "")]
-        processos = sorted({str(d.get("processo") or d.get("Processo") or "") for d in ds if str(d.get("processo") or d.get("Processo") or "").strip()})
-        expedientes = sorted({str(d.get("expediente") or "") for d in ds if str(d.get("expediente") or "").strip()})
-        prazos = sorted({str(d.get("prazo") or "") for d in ds if str(d.get("prazo") or "").strip()})
-        links = sorted({str(d.get("link") or "") for d in ds if str(d.get("link") or "").strip()})
+    for sequencia, (h, grupo_decisoes) in enumerate(decisoes_por_hash.items(), start=1):
+        representante = grupo_decisoes[0]
+        id_decisao = f"D{sequencia:04d}"
+        linhas_origem = [str(d.get("source_row")) for d in grupo_decisoes if d.get("source_row") not in (None, "")]
+        processos_encontrados = sorted({str(d.get("processo") or d.get("Processo") or "") for d in grupo_decisoes if str(d.get("processo") or d.get("Processo") or "").strip()})
+        expedientes_encontrados = sorted({str(d.get("expediente") or "") for d in grupo_decisoes if str(d.get("expediente") or "").strip()})
+        prazos_encontrados = sorted({str(d.get("prazo") or "") for d in grupo_decisoes if str(d.get("prazo") or "").strip()})
+        links_encontrados = sorted({str(d.get("link") or "") for d in grupo_decisoes if str(d.get("link") or "").strip()})
 
-        cands = candidates_by_hash.get(h, [])
-        by_rank: dict[int, dict] = {}
-        for c in cands:
+        candidatos_decisao = candidatos_por_hash.get(h, [])
+        por_posicao: dict[int, dict] = {}
+        for c in candidatos_decisao:
             try:
-                rank = int(c.get("candidate_rank") or 0)
+                posicao = int(c.get("candidate_rank") or 0)
             except Exception:
-                rank = 0
-            if rank > 0 and rank not in by_rank:
-                by_rank[rank] = c
+                posicao = 0
+            if posicao > 0 and posicao not in por_posicao:
+                por_posicao[posicao] = c
 
-        old = prior.get(h, {})
-        review = {
+        anotacao_antiga = anotacoes_previas.get(h, {})
+        revisao = {
             "_decision_sha256": h,
-            "ID": decision_id,
-            "Processo": " | ".join(processos),
-            "Classe": rep.get("classe", ""),
-            "Órgão julgador": rep.get("orgao_julgador", ""),
-            "Expediente": " | ".join(expedientes),
-            "Prazo": " | ".join(prazos),
-            "Assunto": rep.get("assunto", ""),
+            "ID": id_decisao,
+            "Processo": " | ".join(processos_encontrados),
+            "Classe": representante.get("classe", ""),
+            "Órgão julgador": representante.get("orgao_julgador", ""),
+            "Expediente": " | ".join(expedientes_encontrados),
+            "Prazo": " | ".join(prazos_encontrados),
+            "Assunto": representante.get("assunto", ""),
         }
 
         # Candidatos: texto/categoria já são os campos finais editáveis.
-        for i in range(1, slots + 1):
-            c = by_rank.get(i, {})
-            original_text = str(c.get("candidate_text") or "")
-            original_cat = str(c.get("teacher_category") or "")
+        for i in range(1, quantidade_recortes + 1):
+            c = por_posicao.get(i, {})
+            texto_original = str(c.get("candidate_text") or "")
+            categoria_original = str(c.get("teacher_category") or "")
 
             # Migração transparente da v4.2: preserva correções já feitas.
-            old_status = str(old.get(f"candidate_{i}_status") or old.get(f"validacao_{i}") or "").strip().upper()
-            old_adjusted_text = str(old.get(f"candidate_{i}_texto_ajustado") or "").strip()
-            old_adjusted_cat = str(old.get(f"candidate_{i}_categoria_ajustada") or "").strip()
-            old_direct_text = old.get(f"recorte_{i}")
-            old_direct_cat = old.get(f"categoria_{i}")
+            status_antigo = str(anotacao_antiga.get(f"candidate_{i}_status") or anotacao_antiga.get(f"validacao_{i}") or "").strip().upper()
+            texto_ajustado_antigo = str(anotacao_antiga.get(f"candidate_{i}_texto_ajustado") or "").strip()
+            categoria_ajustada_antiga = str(anotacao_antiga.get(f"candidate_{i}_categoria_ajustada") or "").strip()
+            texto_direto_antigo = anotacao_antiga.get(f"recorte_{i}")
+            categoria_direta_antiga = anotacao_antiga.get(f"categoria_{i}")
 
-            final_text = str(old_direct_text if old_direct_text not in (None, "") else (old_adjusted_text if old_status == "AJUSTADO" and old_adjusted_text else original_text))
-            final_cat = str(old_direct_cat if old_direct_cat not in (None, "") else (old_adjusted_cat if old_status == "AJUSTADO" and old_adjusted_cat else original_cat))
+            texto_final = str(texto_direto_antigo if texto_direto_antigo not in (None, "") else (texto_ajustado_antigo if status_antigo == "AJUSTADO" and texto_ajustado_antigo else texto_original))
+            categoria_final = str(categoria_direta_antiga if categoria_direta_antiga not in (None, "") else (categoria_ajustada_antiga if status_antigo == "AJUSTADO" and categoria_ajustada_antiga else categoria_original))
 
-            if original_text:
-                status = old_status if old_status in CANDIDATE_STATUS else "PENDENTE"
+            if texto_original:
+                situacao = status_antigo if status_antigo in STATUS_CANDIDATO else "PENDENTE"
             else:
-                status = ""
+                situacao = ""
 
-            review[f"Recorte {i}"] = final_text
-            review[f"Categoria {i}"] = final_cat
-            review[f"Validação {i}"] = status
+            revisao[f"Recorte {i}"] = texto_final
+            revisao[f"Categoria {i}"] = categoria_final
+            revisao[f"Validação {i}"] = situacao
 
         # Apenas dois espaços extras na tela principal; casos raros adicionais usam adicoes_gold.
         for i in range(1, 3):
-            review[f"Recorte ausente {i}"] = str(old.get(f"adicao_{i}_text") or old.get(f"Recorte ausente {i}") or "")
-            review[f"Categoria ausente {i}"] = str(old.get(f"adicao_{i}_category") or old.get(f"Categoria ausente {i}") or "")
+            revisao[f"Recorte ausente {i}"] = str(anotacao_antiga.get(f"adicao_{i}_text") or anotacao_antiga.get(f"Recorte ausente {i}") or "")
+            revisao[f"Categoria ausente {i}"] = str(anotacao_antiga.get(f"adicao_{i}_category") or anotacao_antiga.get(f"Categoria ausente {i}") or "")
 
-        old_doc_status = str(old.get("status_documento") or old.get("Status da decisão") or "").strip().upper()
-        review.update({
-            "Status da decisão": old_doc_status if old_doc_status in DOCUMENT_STATUS else "PENDENTE_REVISAO",
-            "Revisor": str(old.get("revisor") or old.get("Revisor") or ""),
-            "Observação": str(old.get("observacao_documento") or old.get("Observação") or ""),
+        status_documento_antigo = str(anotacao_antiga.get("status_documento") or anotacao_antiga.get("Status da decisão") or "").strip().upper()
+        revisao.update({
+            "Status da decisão": status_documento_antigo if status_documento_antigo in STATUS_DOCUMENTO else "PENDENTE_REVISAO",
+            "Revisor": str(anotacao_antiga.get("revisor") or anotacao_antiga.get("Revisor") or ""),
+            "Observação": str(anotacao_antiga.get("observacao_documento") or anotacao_antiga.get("Observação") or ""),
         })
-        review_rows.append(review)
+        linhas_revisao.append(revisao)
 
-        technical = {
+        dados_tecnicos = {
             "_decision_sha256": h,
-            "ID": decision_id,
-            "source_rows": ", ".join(source_rows),
-            "ocorrencias_na_base": len(ds),
-            "Processo": " | ".join(processos),
-            "classe": rep.get("classe", ""),
-            "origem": rep.get("origem", ""),
-            "orgao_julgador": rep.get("orgao_julgador", ""),
-            "data": rep.get("data", ""),
-            "expedientes": " | ".join(expedientes),
-            "prazos_origem": " | ".join(prazos),
-            "assunto": rep.get("assunto", ""),
-            "secao_subsecao": rep.get("secao_subsecao", ""),
-            "nucleo": rep.get("nucleo", ""),
-            "rule_id": rep.get("rule_id", ""),
-            "rule_label": rep.get("rule_label", ""),
-            "route_key": rep.get("route_key", ""),
-            "specialist": rep.get("specialist", ""),
-            "teacher_status": rep.get("teacher_status", ""),
-            "teacher_attempts": rep.get("teacher_attempts", ""),
-            "teacher_response_mode": rep.get("teacher_response_mode", ""),
-            "cache_reutilizado": any(bool(d.get("cache_hit")) for d in ds) or len(ds) > 1,
-            "links_origem": " | ".join(links),
-            "decisao": rep.get("decisao", ""),
+            "ID": id_decisao,
+            "source_rows": ", ".join(linhas_origem),
+            "ocorrencias_na_base": len(grupo_decisoes),
+            "Processo": " | ".join(processos_encontrados),
+            "classe": representante.get("classe", ""),
+            "origem": representante.get("origem", ""),
+            "orgao_julgador": representante.get("orgao_julgador", ""),
+            "data": representante.get("data", ""),
+            "expedientes": " | ".join(expedientes_encontrados),
+            "prazos_origem": " | ".join(prazos_encontrados),
+            "assunto": representante.get("assunto", ""),
+            "secao_subsecao": representante.get("secao_subsecao", ""),
+            "nucleo": representante.get("nucleo", ""),
+            "rule_id": representante.get("rule_id", ""),
+            "rule_label": representante.get("rule_label", ""),
+            "route_key": representante.get("route_key", ""),
+            "specialist": representante.get("specialist", ""),
+            "teacher_status": representante.get("teacher_status", ""),
+            "teacher_attempts": representante.get("teacher_attempts", ""),
+            "teacher_response_mode": representante.get("teacher_response_mode", ""),
+            "cache_reutilizado": any(bool(d.get("cache_hit")) for d in grupo_decisoes) or len(grupo_decisoes) > 1,
+            "links_origem": " | ".join(links_encontrados),
+            "decisao": representante.get("decisao", ""),
         }
-        for i in range(1, slots + 1):
-            c = by_rank.get(i, {})
-            technical[f"teacher_text_{i}"] = c.get("candidate_text", "")
-            technical[f"teacher_category_{i}"] = c.get("teacher_category", "")
-            technical[f"teacher_priority_{i}"] = c.get("teacher_priority", "")
-            technical[f"teacher_reason_{i}"] = c.get("teacher_reason", "")
-        technical_rows.append(technical)
+        for i in range(1, quantidade_recortes + 1):
+            c = por_posicao.get(i, {})
+            dados_tecnicos[f"teacher_text_{i}"] = c.get("candidate_text", "")
+            dados_tecnicos[f"teacher_category_{i}"] = c.get("teacher_category", "")
+            dados_tecnicos[f"teacher_priority_{i}"] = c.get("teacher_priority", "")
+            dados_tecnicos[f"teacher_reason_{i}"] = c.get("teacher_reason", "")
+        linhas_tecnicas.append(dados_tecnicos)
 
-    return review_rows, technical_rows
+    return linhas_revisao, linhas_tecnicas
 
 
-def _format_review(ws, slots: int, rows_count: int):
-    _style_header(ws)
-    ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "C2"
+def _formatar_revisao(planilha, quantidade_recortes: int, quantidade_linhas: int):
+    _estilizar_cabecalho(planilha)
+    planilha.sheet_view.showGridLines = False
+    planilha.freeze_panes = "C2"
 
-    header_map = {c.value: c.column for c in ws[1]}
+    mapa_cabecalhos = {c.value: c.column for c in planilha[1]}
 
     # Coluna de hash existe para ligação técnica, mas fica invisível para o procurador.
-    if "_decision_sha256" in header_map:
-        ws.column_dimensions[get_column_letter(header_map["_decision_sha256"])].hidden = True
+    if "_decision_sha256" in mapa_cabecalhos:
+        planilha.column_dimensions[get_column_letter(mapa_cabecalhos["_decision_sha256"])].hidden = True
 
-    widths = {
+    larguras = {
         "ID": 9,
         "Processo": 25,
         "Classe": 16,
@@ -255,246 +255,246 @@ def _format_review(ws, slots: int, rows_count: int):
         "Revisor": 20,
         "Observação": 32,
     }
-    for name, width in widths.items():
-        if name in header_map:
-            ws.column_dimensions[get_column_letter(header_map[name])].width = width
+    for nome, largura in larguras.items():
+        if nome in mapa_cabecalhos:
+            planilha.column_dimensions[get_column_letter(mapa_cabecalhos[nome])].width = largura
 
-    for i in range(1, slots + 1):
-        for name, width in {
+    for i in range(1, quantidade_recortes + 1):
+        for nome, largura in {
             f"Recorte {i}": 48,
             f"Categoria {i}": 24,
             f"Validação {i}": 15,
         }.items():
-            if name in header_map:
-                ws.column_dimensions[get_column_letter(header_map[name])].width = width
+            if nome in mapa_cabecalhos:
+                planilha.column_dimensions[get_column_letter(mapa_cabecalhos[nome])].width = largura
 
     for i in range(1, 3):
-        for name, width in {
+        for nome, largura in {
             f"Recorte ausente {i}": 42,
             f"Categoria ausente {i}": 24,
         }.items():
-            if name in header_map:
-                ws.column_dimensions[get_column_letter(header_map[name])].width = width
+            if nome in mapa_cabecalhos:
+                planilha.column_dimensions[get_column_letter(mapa_cabecalhos[nome])].width = largura
 
     # Altura fixa: evita que textos longos criem linhas gigantes.
-    for r in range(2, rows_count + 2):
-        ws.row_dimensions[r].height = 54
+    for r in range(2, quantidade_linhas + 2):
+        planilha.row_dimensions[r].height = 54
 
     # Sem wrap por padrão; campos de texto de revisão usam wrap dentro da altura fixa.
-    for row in ws.iter_rows():
-        for c in row:
+    for linha in planilha.iter_rows():
+        for c in linha:
             c.alignment = Alignment(vertical="top", wrap_text=False)
 
-    wrap_names = ["Assunto", "Observação"]
-    for i in range(1, slots + 1):
-        wrap_names.append(f"Recorte {i}")
+    colunas_quebra_texto = ["Assunto", "Observação"]
+    for i in range(1, quantidade_recortes + 1):
+        colunas_quebra_texto.append(f"Recorte {i}")
     for i in range(1, 3):
-        wrap_names.append(f"Recorte ausente {i}")
-    for name in wrap_names:
-        if name in header_map:
-            col = get_column_letter(header_map[name])
-            for c in ws[col][1:]:
+        colunas_quebra_texto.append(f"Recorte ausente {i}")
+    for nome in colunas_quebra_texto:
+        if nome in mapa_cabecalhos:
+            coluna = get_column_letter(mapa_cabecalhos[nome])
+            for c in planilha[coluna][1:]:
                 c.alignment = Alignment(vertical="top", wrap_text=True)
 
     # Cores por blocos para leitura rápida.
-    context_names = ["ID", "Processo", "Classe", "Órgão julgador", "Expediente", "Prazo", "Assunto"]
-    for name in context_names:
-        if name in header_map:
-            col = get_column_letter(header_map[name])
-            for c in ws[col][1:]:
-                c.fill = PatternFill("solid", fgColor=CONTEXT_FILL)
+    colunas_contexto = ["ID", "Processo", "Classe", "Órgão julgador", "Expediente", "Prazo", "Assunto"]
+    for nome in colunas_contexto:
+        if nome in mapa_cabecalhos:
+            coluna = get_column_letter(mapa_cabecalhos[nome])
+            for c in planilha[coluna][1:]:
+                c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_CONTEXTO)
 
-    for i in range(1, slots + 1):
-        for name in (f"Recorte {i}", f"Categoria {i}", f"Validação {i}"):
-            if name in header_map:
-                col = get_column_letter(header_map[name])
-                for c in ws[col][1:]:
-                    c.fill = PatternFill("solid", fgColor=CANDIDATE_FILL)
+    for i in range(1, quantidade_recortes + 1):
+        for nome in (f"Recorte {i}", f"Categoria {i}", f"Validação {i}"):
+            if nome in mapa_cabecalhos:
+                coluna = get_column_letter(mapa_cabecalhos[nome])
+                for c in planilha[coluna][1:]:
+                    c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_CANDIDATO)
 
     for i in range(1, 3):
-        for name in (f"Recorte ausente {i}", f"Categoria ausente {i}"):
-            if name in header_map:
-                col = get_column_letter(header_map[name])
-                for c in ws[col][1:]:
-                    c.fill = PatternFill("solid", fgColor=HUMAN_FILL)
+        for nome in (f"Recorte ausente {i}", f"Categoria ausente {i}"):
+            if nome in mapa_cabecalhos:
+                coluna = get_column_letter(mapa_cabecalhos[nome])
+                for c in planilha[coluna][1:]:
+                    c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_HUMANO)
 
-    for name in ("Status da decisão", "Revisor", "Observação"):
-        if name in header_map:
-            col = get_column_letter(header_map[name])
-            for c in ws[col][1:]:
-                c.fill = PatternFill("solid", fgColor=STATUS_FILL)
+    for nome in ("Status da decisão", "Revisor", "Observação"):
+        if nome in mapa_cabecalhos:
+            coluna = get_column_letter(mapa_cabecalhos[nome])
+            for c in planilha[coluna][1:]:
+                c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_STATUS)
 
-    if rows_count:
-        end = rows_count + 1
-        for i in range(1, slots + 1):
-            cat = get_column_letter(header_map[f"Categoria {i}"])
-            status = get_column_letter(header_map[f"Validação {i}"])
-            _add_validation_list(ws, f"{cat}2:{cat}{end}", f"=listas!$B$2:$B${len(CATEGORIES)+1}")
+    if quantidade_linhas:
+        fim = quantidade_linhas + 1
+        for i in range(1, quantidade_recortes + 1):
+            categoria = get_column_letter(mapa_cabecalhos[f"Categoria {i}"])
+            situacao = get_column_letter(mapa_cabecalhos[f"Validação {i}"])
+            _adicionar_lista_validacao(planilha, f"{categoria}2:{categoria}{fim}", f"=listas!$B$2:$B${len(CATEGORIAS)+1}")
             # Status só é obrigatório para linhas que têm candidato; linhas vazias permanecem vazias.
-            dv = DataValidation(type="list", formula1="=listas!$A$2:$A$5", allow_blank=True)
-            dv.error = "Escolha PENDENTE, APROVADO, AJUSTADO ou REJEITADO."
-            dv.showErrorMessage = True
-            ws.add_data_validation(dv)
-            dv.add(f"{status}2:{status}{end}")
+            validacao_dados = DataValidation(type="list", formula1="=listas!$A$2:$A$5", allow_blank=True)
+            validacao_dados.error = "Escolha PENDENTE, APROVADO, AJUSTADO ou REJEITADO."
+            validacao_dados.showErrorMessage = True
+            planilha.add_data_validation(validacao_dados)
+            validacao_dados.add(f"{situacao}2:{situacao}{fim}")
 
             # Cores do dropdown de validação.
-            ws.conditional_formatting.add(
-                f"{status}2:{status}{end}",
-                FormulaRule(formula=[f'${status}2="APROVADO"'], fill=PatternFill("solid", fgColor=GREEN_FILL)),
+            planilha.conditional_formatting.add(
+                f"{situacao}2:{situacao}{fim}",
+                FormulaRule(formula=[f'${situacao}2="APROVADO"'], fill=PatternFill("solid", fgColor=PREENCHIMENTO_VERDE)),
             )
-            ws.conditional_formatting.add(
-                f"{status}2:{status}{end}",
-                FormulaRule(formula=[f'${status}2="AJUSTADO"'], fill=PatternFill("solid", fgColor=ORANGE_FILL)),
+            planilha.conditional_formatting.add(
+                f"{situacao}2:{situacao}{fim}",
+                FormulaRule(formula=[f'${situacao}2="AJUSTADO"'], fill=PatternFill("solid", fgColor=PREENCHIMENTO_LARANJA)),
             )
-            ws.conditional_formatting.add(
-                f"{status}2:{status}{end}",
-                FormulaRule(formula=[f'${status}2="REJEITADO"'], fill=PatternFill("solid", fgColor=RED_FILL)),
+            planilha.conditional_formatting.add(
+                f"{situacao}2:{situacao}{fim}",
+                FormulaRule(formula=[f'${situacao}2="REJEITADO"'], fill=PatternFill("solid", fgColor=PREENCHIMENTO_VERMELHO)),
             )
-            ws.conditional_formatting.add(
-                f"{status}2:{status}{end}",
-                FormulaRule(formula=[f'${status}2="PENDENTE"'], fill=PatternFill("solid", fgColor=YELLOW_FILL)),
+            planilha.conditional_formatting.add(
+                f"{situacao}2:{situacao}{fim}",
+                FormulaRule(formula=[f'${situacao}2="PENDENTE"'], fill=PatternFill("solid", fgColor=PREENCHIMENTO_AMARELO)),
             )
 
         for i in range(1, 3):
-            cat = get_column_letter(header_map[f"Categoria ausente {i}"])
-            dv = DataValidation(type="list", formula1=f"=listas!$B$2:$B${len(CATEGORIES)+1}", allow_blank=True)
-            dv.showErrorMessage = True
-            ws.add_data_validation(dv)
-            dv.add(f"{cat}2:{cat}{end}")
+            categoria = get_column_letter(mapa_cabecalhos[f"Categoria ausente {i}"])
+            validacao_dados = DataValidation(type="list", formula1=f"=listas!$B$2:$B${len(CATEGORIAS)+1}", allow_blank=True)
+            validacao_dados.showErrorMessage = True
+            planilha.add_data_validation(validacao_dados)
+            validacao_dados.add(f"{categoria}2:{categoria}{fim}")
 
-        doc_status = get_column_letter(header_map["Status da decisão"])
-        _add_validation_list(ws, f"{doc_status}2:{doc_status}{end}", "=listas!$C$2:$C$3")
-        ws.conditional_formatting.add(
-            f"{doc_status}2:{doc_status}{end}",
-            FormulaRule(formula=[f'${doc_status}2="VALIDADO_COMPLETO"'], fill=PatternFill("solid", fgColor=GREEN_FILL)),
+        status_documento = get_column_letter(mapa_cabecalhos["Status da decisão"])
+        _adicionar_lista_validacao(planilha, f"{status_documento}2:{status_documento}{fim}", "=listas!$C$2:$C$3")
+        planilha.conditional_formatting.add(
+            f"{status_documento}2:{status_documento}{fim}",
+            FormulaRule(formula=[f'${status_documento}2="VALIDADO_COMPLETO"'], fill=PatternFill("solid", fgColor=PREENCHIMENTO_VERDE)),
         )
 
         # Alerta visual: não marcar documento completo enquanto algum candidato ainda estiver PENDENTE.
-        pending_checks = []
-        for i in range(1, slots + 1):
-            txt_col = get_column_letter(header_map[f"Recorte {i}"])
-            val_col = get_column_letter(header_map[f"Validação {i}"])
-            pending_checks.append(f'AND(${txt_col}2<>"",${val_col}2="PENDENTE")')
-        if pending_checks:
-            formula = f'=AND(${doc_status}2="VALIDADO_COMPLETO",OR({",".join(pending_checks)}))'
-            ws.conditional_formatting.add(
-                f"A2:{get_column_letter(ws.max_column)}{end}",
-                FormulaRule(formula=[formula], fill=PatternFill("solid", fgColor=RED_FILL)),
+        verificacoes_pendentes = []
+        for i in range(1, quantidade_recortes + 1):
+            coluna_texto = get_column_letter(mapa_cabecalhos[f"Recorte {i}"])
+            coluna_validacao = get_column_letter(mapa_cabecalhos[f"Validação {i}"])
+            verificacoes_pendentes.append(f'AND(${coluna_texto}2<>"",${coluna_validacao}2="PENDENTE")')
+        if verificacoes_pendentes:
+            formula = f'=AND(${status_documento}2="VALIDADO_COMPLETO",OR({",".join(verificacoes_pendentes)}))'
+            planilha.conditional_formatting.add(
+                f"A2:{get_column_letter(planilha.max_column)}{fim}",
+                FormulaRule(formula=[formula], fill=PatternFill("solid", fgColor=PREENCHIMENTO_VERMELHO)),
             )
 
 
-def _build_reading_sheet(ws, technical_rows: list[dict]):
-    rows = []
-    for t in technical_rows:
-        rows.append({
+def _construir_aba_leitura(planilha, linhas_tecnicas: list[dict]):
+    linhas = []
+    for t in linhas_tecnicas:
+        linhas.append({
             "ID": t.get("ID", ""),
             "Processo": t.get("Processo", ""),
             "Classe": t.get("classe", ""),
             "Assunto": t.get("assunto", ""),
             "Decisão completa": t.get("decisao", ""),
         })
-    _sheet(ws, rows)
-    ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "A2"
-    widths = {"A": 10, "B": 26, "C": 18, "D": 28, "E": 100}
-    for col, width in widths.items():
-        ws.column_dimensions[col].width = width
-    for r in range(2, ws.max_row + 1):
-        ws.row_dimensions[r].height = 110
-        ws.cell(r, 5).alignment = Alignment(vertical="top", wrap_text=True)
+    _preencher_aba(planilha, linhas)
+    planilha.sheet_view.showGridLines = False
+    planilha.freeze_panes = "A2"
+    larguras = {"A": 10, "B": 26, "C": 18, "D": 28, "E": 100}
+    for coluna, largura in larguras.items():
+        planilha.column_dimensions[coluna].width = largura
+    for r in range(2, planilha.max_row + 1):
+        planilha.row_dimensions[r].height = 110
+        planilha.cell(r, 5).alignment = Alignment(vertical="top", wrap_text=True)
 
 
-def _build_metrics_sheet(ws, review_ws, tech_ws, slots: int, review_rows: int):
-    ws.sheet_view.showGridLines = False
-    ws["A1"] = "DIDE1 — Qualidade após revisão humana"
-    ws["A1"].font = Font(bold=True, size=14)
-    ws.merge_cells("A1:D1")
-    ws["A2"] = "As métricas só são confiáveis depois que o procurador revisa a decisão inteira e marca VALIDADO_COMPLETO."
-    ws.merge_cells("A2:D2")
-    ws["A2"].fill = PatternFill("solid", fgColor=WARN_FILL)
-    ws["A2"].alignment = Alignment(wrap_text=True)
+def _construir_aba_metricas(planilha, aba_revisao, aba_tecnica, quantidade_recortes: int, linhas_revisao: int):
+    planilha.sheet_view.showGridLines = False
+    planilha["A1"] = "DIDE1 — Qualidade após revisão humana"
+    planilha["A1"].font = Font(bold=True, size=14)
+    planilha.merge_cells("A1:D1")
+    planilha["A2"] = "As métricas só são confiáveis depois que o procurador revisa a decisão inteira e marca VALIDADO_COMPLETO."
+    planilha.merge_cells("A2:D2")
+    planilha["A2"].fill = PatternFill("solid", fgColor=PREENCHIMENTO_ALERTA)
+    planilha["A2"].alignment = Alignment(wrap_text=True)
 
-    h = {c.value: get_column_letter(c.column) for c in review_ws[1]}
-    end = max(2, review_rows + 1)
-    sh = "'revisao'"
+    h = {c.value: get_column_letter(c.column) for c in aba_revisao[1]}
+    fim = max(2, linhas_revisao + 1)
+    aba_atual = "'revisao'"
 
-    def sum_status(value: str) -> str:
-        parts = []
-        for i in range(1, slots + 1):
+    def somar_status(valor: str) -> str:
+        partes = []
+        for i in range(1, quantidade_recortes + 1):
             c = h[f"Validação {i}"]
-            parts.append(f'COUNTIF({sh}!${c}$2:${c}${end},"{value}")')
-        return "=" + "+".join(parts)
+            partes.append(f'COUNTIF({aba_atual}!${c}$2:${c}${fim},"{valor}")')
+        return "=" + "+".join(partes)
 
-    candidate_nonblank = []
-    for i in range(1, slots + 1):
+    candidato_preenchido = []
+    for i in range(1, quantidade_recortes + 1):
         c = h[f"Recorte {i}"]
-        candidate_nonblank.append(f'COUNTIF({sh}!${c}$2:${c}${end},"<>")')
+        candidato_preenchido.append(f'COUNTIF({aba_atual}!${c}$2:${c}${fim},"<>")')
 
-    addition_nonblank = []
+    adicao_preenchida = []
     for i in range(1, 3):
         c = h[f"Recorte ausente {i}"]
-        addition_nonblank.append(f'COUNTIF({sh}!${c}$2:${c}${end},"<>")')
+        adicao_preenchida.append(f'COUNTIF({aba_atual}!${c}$2:${c}${fim},"<>")')
 
-    rows = [
+    linhas = [
         ["MÉTRICA", "VALOR", "INTERPRETAÇÃO"],
-        ["Decisões únicas", f'=COUNTA({sh}!${h["ID"]}$2:${h["ID"]}${end})', "Uma linha por decisão única."],
-        ["Decisões VALIDADO_COMPLETO", f'=COUNTIF({sh}!${h["Status da decisão"]}$2:${h["Status da decisão"]}${end},"VALIDADO_COMPLETO")', "Entram no GOLD somente após revisão completa."],
-        ["Candidatos propostos", "=" + "+".join(candidate_nonblank), "Recortes sugeridos pelo teacher."],
-        ["APROVADOS", sum_status("APROVADO"), "Corretos sem alteração humana."],
-        ["AJUSTADOS", sum_status("AJUSTADO"), "Úteis, mas o procurador editou texto e/ou categoria."],
-        ["REJEITADOS", sum_status("REJEITADO"), "Falsos positivos."],
-        ["PENDENTES", sum_status("PENDENTE"), "Ainda não revisados."],
-        ["Adições humanas", "=" + "+".join(addition_nonblank), "Recortes relevantes que o modelo deixou escapar."],
+        ["Decisões únicas", f'=COUNTA({aba_atual}!${h["ID"]}$2:${h["ID"]}${fim})', "Uma linha por decisão única."],
+        ["Decisões VALIDADO_COMPLETO", f'=COUNTIF({aba_atual}!${h["Status da decisão"]}$2:${h["Status da decisão"]}${fim},"VALIDADO_COMPLETO")', "Entram no GOLD somente após revisão completa."],
+        ["Candidatos propostos", "=" + "+".join(candidato_preenchido), "Recortes sugeridos pelo teacher."],
+        ["APROVADOS", somar_status("APROVADO"), "Corretos sem alteração humana."],
+        ["AJUSTADOS", somar_status("AJUSTADO"), "Úteis, mas o procurador editou texto e/ou categoria."],
+        ["REJEITADOS", somar_status("REJEITADO"), "Falsos positivos."],
+        ["PENDENTES", somar_status("PENDENTE"), "Ainda não revisados."],
+        ["Adições humanas", "=" + "+".join(adicao_preenchida), "Recortes relevantes que o modelo deixou escapar."],
     ]
-    for row in rows:
-        ws.append(row)
-    for c in ws[3]:
-        c.fill = PatternFill("solid", fgColor=HEADER_FILL)
-        c.font = Font(bold=True, color=HEADER_FONT)
+    for linha in linhas:
+        planilha.append(linha)
+    for c in planilha[3]:
+        c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_CABECALHO)
+        c.font = Font(bold=True, color=FONTE_CABECALHO)
 
-    metric_rows = {ws.cell(r, 1).value: r for r in range(1, ws.max_row + 1)}
-    app = f"B{metric_rows['APROVADOS']}"
-    adj = f"B{metric_rows['AJUSTADOS']}"
-    rej = f"B{metric_rows['REJEITADOS']}"
-    adds = f"B{metric_rows['Adições humanas']}"
-    validated = f"B{metric_rows['Decisões VALIDADO_COMPLETO']}"
+    linhas_metricas = {planilha.cell(r, 1).value: r for r in range(1, planilha.max_row + 1)}
+    aprovados = f"B{linhas_metricas['APROVADOS']}"
+    ajustados = f"B{linhas_metricas['AJUSTADOS']}"
+    rejeitados = f"B{linhas_metricas['REJEITADOS']}"
+    adicoes = f"B{linhas_metricas['Adições humanas']}"
+    validados = f"B{linhas_metricas['Decisões VALIDADO_COMPLETO']}"
 
-    ws.append([])
-    ws.append(["INDICADOR", "VALOR", "DEFINIÇÃO"])
-    for c in ws[ws.max_row]:
+    planilha.append([])
+    planilha.append(["INDICADOR", "VALOR", "DEFINIÇÃO"])
+    for c in planilha[planilha.max_row]:
         c.font = Font(bold=True, color="000000")
-        c.fill = PatternFill("solid", fgColor=KPI_FILL)
+        c.fill = PatternFill("solid", fgColor=PREENCHIMENTO_KPI)
 
-    precision_row = ws.max_row + 1
-    quality = [
-        ["Precisão estrita", f'=IFERROR({app}/({app}+{adj}+{rej}),"")', "Aprovados / candidatos efetivamente revisados."],
-        ["Taxa útil", f'=IFERROR(({app}+{adj})/({app}+{adj}+{rej}),"")', "Aprovados + ajustados / revisados."],
-        ["Recall estimado", f'=IFERROR(({app}+{adj})/({app}+{adj}+{adds}),"")', "Recortes úteis encontrados / encontrados + adições humanas."],
+    linha_precisao = planilha.max_row + 1
+    qualidade = [
+        ["Precisão estrita", f'=IFERROR({aprovados}/({aprovados}+{ajustados}+{rejeitados}),"")', "Aprovados / candidatos efetivamente revisados."],
+        ["Taxa útil", f'=IFERROR(({aprovados}+{ajustados})/({aprovados}+{ajustados}+{rejeitados}),"")', "Aprovados + ajustados / revisados."],
+        ["Recall estimado", f'=IFERROR(({aprovados}+{ajustados})/({aprovados}+{ajustados}+{adicoes}),"")', "Recortes úteis encontrados / encontrados + adições humanas."],
     ]
-    for row in quality:
-        ws.append(row)
-    recall_row = precision_row + 2
-    ws.append(["F1 estimado", f'=IFERROR(2*B{precision_row}*B{recall_row}/(B{precision_row}+B{recall_row}),"")', "Média harmônica entre precisão estrita e recall estimado."])
+    for linha in qualidade:
+        planilha.append(linha)
+    linha_recall = linha_precisao + 2
+    planilha.append(["F1 estimado", f'=IFERROR(2*B{linha_precisao}*B{linha_recall}/(B{linha_precisao}+B{linha_recall}),"")', "Média harmônica entre precisão estrita e recall estimado."])
 
     # Acurácia de categoria: APROVADO é correto; AJUSTADO conta como correto se categoria final = teacher original.
     # Para manter a fórmula simples, o indicador é calculado na geração do GOLD e registrado no manifest do GOLD.
-    ws.append(["Cobertura completa", f'=IFERROR(SUMPRODUCT(--({sh}!${h["Status da decisão"]}$2:${h["Status da decisão"]}${end}="VALIDADO_COMPLETO"),--({sh}!${h["Recorte ausente 1"]}$2:${h["Recorte ausente 1"]}${end}=""),--({sh}!${h["Recorte ausente 2"]}$2:${h["Recorte ausente 2"]}${end}=""))/{validated},"")', "Documentos validados sem recortes adicionais humanos."])
+    planilha.append(["Cobertura completa", f'=IFERROR(SUMPRODUCT(--({aba_atual}!${h["Status da decisão"]}$2:${h["Status da decisão"]}${fim}="VALIDADO_COMPLETO"),--({aba_atual}!${h["Recorte ausente 1"]}$2:${h["Recorte ausente 1"]}${fim}=""),--({aba_atual}!${h["Recorte ausente 2"]}$2:${h["Recorte ausente 2"]}${fim}=""))/{validados},"")', "Documentos validados sem recortes adicionais humanos."])
 
-    start = precision_row
-    for r in range(start, ws.max_row + 1):
-        ws.cell(r, 2).number_format = "0.0%"
+    inicio = linha_precisao
+    for r in range(inicio, planilha.max_row + 1):
+        planilha.cell(r, 2).number_format = "0.0%"
 
-    ws.column_dimensions["A"].width = 32
-    ws.column_dimensions["B"].width = 18
-    ws.column_dimensions["C"].width = 80
-    for row in ws.iter_rows():
-        for c in row:
+    planilha.column_dimensions["A"].width = 32
+    planilha.column_dimensions["B"].width = 18
+    planilha.column_dimensions["C"].width = 80
+    for linha in planilha.iter_rows():
+        for c in linha:
             c.alignment = Alignment(vertical="top", wrap_text=True)
-    ws.freeze_panes = "A4"
+    planilha.freeze_panes = "A4"
 
 
-def _build_instructions(ws):
-    rows = [
+def _construir_instrucoes(planilha):
+    linhas = [
         ["PASSO", "O QUE FAZER"],
         ["1", "Abra 'leitura_decisoes' e leia a decisão integral pelo ID/Processo."],
         ["2", "Na aba 'revisao', confira Recorte 1/2/3. Em Validação escolha APROVADO, AJUSTADO ou REJEITADO."],
@@ -504,99 +504,99 @@ def _build_instructions(ws):
         ["6", "Não altere as abas técnicas ocultas. Elas guardam proveniência, texto integral e saída original para treinamento/auditoria."],
         ["GOLD", "O comando build-gold usa apenas decisões VALIDADO_COMPLETO e bloqueia documentos com candidatos ainda PENDENTE."],
     ]
-    for r in rows:
-        ws.append(r)
-    _style_header(ws)
-    ws.column_dimensions["A"].width = 18
-    ws.column_dimensions["B"].width = 120
-    for row in ws.iter_rows():
-        for c in row:
+    for r in linhas:
+        planilha.append(r)
+    _estilizar_cabecalho(planilha)
+    planilha.column_dimensions["A"].width = 18
+    planilha.column_dimensions["B"].width = 120
+    for linha in planilha.iter_rows():
+        for c in linha:
             c.alignment = Alignment(vertical="top", wrap_text=True)
 
 
-def _build_lists(ws):
-    ws.append(["validacao", "categoria", "status_documento"])
-    max_len = max(len(CANDIDATE_STATUS), len(CATEGORIES), len(DOCUMENT_STATUS))
-    for i in range(max_len):
-        ws.append([
-            CANDIDATE_STATUS[i] if i < len(CANDIDATE_STATUS) else "",
-            CATEGORIES[i] if i < len(CATEGORIES) else "",
-            DOCUMENT_STATUS[i] if i < len(DOCUMENT_STATUS) else "",
+def _construir_listas(planilha):
+    planilha.append(["validacao", "categoria", "status_documento"])
+    tamanho_maximo = max(len(STATUS_CANDIDATO), len(CATEGORIAS), len(STATUS_DOCUMENTO))
+    for i in range(tamanho_maximo):
+        planilha.append([
+            STATUS_CANDIDATO[i] if i < len(STATUS_CANDIDATO) else "",
+            CATEGORIAS[i] if i < len(CATEGORIAS) else "",
+            STATUS_DOCUMENTO[i] if i < len(STATUS_DOCUMENTO) else "",
         ])
 
 
-def write_review_workbook(path, decisions, candidates, prior_rows: list[dict] | None = None):
-    slots = max(3, max([int(c.get("candidate_rank") or 0) for c in candidates] or [0]))
-    review_rows, technical_rows = _build_review_rows(decisions, candidates, slots, prior_rows=prior_rows)
+def escrever_planilha_revisao(caminho, decisoes, candidatos, linhas_anteriores: list[dict] | None = None):
+    quantidade_recortes = max(3, max([int(c.get("candidate_rank") or 0) for c in candidatos] or [0]))
+    linhas_revisao, linhas_tecnicas = _construir_linhas_revisao(decisoes, candidatos, quantidade_recortes, linhas_anteriores=linhas_anteriores)
 
-    wb = Workbook()
-    review = wb.active
-    review.title = "revisao"
-    if review_rows:
-        headers = list(review_rows[0].keys())
-        review.append(headers)
-        for r in review_rows:
-            review.append([r.get(h, "") for h in headers])
-        _format_review(review, slots, len(review_rows))
+    pasta_trabalho = Workbook()
+    revisao = pasta_trabalho.active
+    revisao.title = "revisao"
+    if linhas_revisao:
+        cabecalhos = list(linhas_revisao[0].keys())
+        revisao.append(cabecalhos)
+        for r in linhas_revisao:
+            revisao.append([r.get(h, "") for h in cabecalhos])
+        _formatar_revisao(revisao, quantidade_recortes, len(linhas_revisao))
 
-    reading = wb.create_sheet("leitura_decisoes")
-    _build_reading_sheet(reading, technical_rows)
+    leitura = pasta_trabalho.create_sheet("leitura_decisoes")
+    _construir_aba_leitura(leitura, linhas_tecnicas)
 
-    metrics = wb.create_sheet("metricas")
-    tech = wb.create_sheet("dados_tecnicos")
-    _sheet(tech, technical_rows)
-    tech.sheet_state = "hidden"
+    metricas = pasta_trabalho.create_sheet("metricas")
+    tecnico = pasta_trabalho.create_sheet("dados_tecnicos")
+    _preencher_aba(tecnico, linhas_tecnicas)
+    tecnico.sheet_state = "hidden"
 
-    cand = wb.create_sheet("candidatos_tecnicos")
-    _sheet(cand, candidates)
-    cand.sheet_state = "hidden"
+    aba_candidatos = pasta_trabalho.create_sheet("candidatos_tecnicos")
+    _preencher_aba(aba_candidatos, candidatos)
+    aba_candidatos.sheet_state = "hidden"
 
-    instr = wb.create_sheet("instrucoes")
-    _build_instructions(instr)
+    instrucoes = pasta_trabalho.create_sheet("instrucoes")
+    _construir_instrucoes(instrucoes)
 
-    add = wb.create_sheet("adicoes_gold")
-    add.append(["ID", "decision_sha256", "Processo", "texto_gold", "categoria_gold", "observacao", "revisor", "revisado_em"])
-    _style_header(add)
-    add.column_dimensions["D"].width = 80
-    add.column_dimensions["E"].width = 28
-    dv = DataValidation(type="list", formula1=f"=listas!$B$2:$B${len(CATEGORIES)+1}", allow_blank=True)
-    add.add_data_validation(dv)
-    dv.add("E2:E5000")
+    aba_adicoes = pasta_trabalho.create_sheet("adicoes_gold")
+    aba_adicoes.append(["ID", "decision_sha256", "Processo", "texto_gold", "categoria_gold", "observacao", "revisor", "revisado_em"])
+    _estilizar_cabecalho(aba_adicoes)
+    aba_adicoes.column_dimensions["D"].width = 80
+    aba_adicoes.column_dimensions["E"].width = 28
+    validacao_dados = DataValidation(type="list", formula1=f"=listas!$B$2:$B${len(CATEGORIAS)+1}", allow_blank=True)
+    aba_adicoes.add_data_validation(validacao_dados)
+    validacao_dados.add("E2:E5000")
 
-    listas = wb.create_sheet("listas")
-    _build_lists(listas)
-    listas.sheet_state = "hidden"
+    listas_validacao = pasta_trabalho.create_sheet("listas")
+    _construir_listas(listas_validacao)
+    listas_validacao.sheet_state = "hidden"
 
-    _build_metrics_sheet(metrics, review, tech, slots, len(review_rows))
+    _construir_aba_metricas(metricas, revisao, tecnico, quantidade_recortes, len(linhas_revisao))
 
-    wb.active = wb.sheetnames.index("revisao")
-    wb.save(Path(path))
+    pasta_trabalho.active = pasta_trabalho.sheetnames.index("revisao")
+    pasta_trabalho.save(Path(caminho))
 
 
-def _read_prior_review_rows(wb) -> list[dict]:
-    if "revisao" in wb.sheetnames:
-        return list(_rows_dict(wb["revisao"]))
-    if "revisao_consolidada" in wb.sheetnames:
-        return list(_rows_dict(wb["revisao_consolidada"]))
+def _ler_linhas_revisao_anterior(pasta_trabalho) -> list[dict]:
+    if "revisao" in pasta_trabalho.sheetnames:
+        return list(_linhas_como_dicionario(pasta_trabalho["revisao"]))
+    if "revisao_consolidada" in pasta_trabalho.sheetnames:
+        return list(_linhas_como_dicionario(pasta_trabalho["revisao_consolidada"]))
     return []
 
 
-def rebuild_review(review_xlsx: str, output_xlsx: str):
+def reconstruir_revisao(planilha_revisao_xlsx: str, arquivo_saida_xlsx: str):
     """Recria somente a planilha de revisão, sem chamar o Qwen.
 
     Aceita workbook v4.2/v4.3. Preserva anotações humanas já existentes quando possível.
     """
-    wb = load_workbook(review_xlsx, data_only=False)
-    prior = _read_prior_review_rows(wb)
+    pasta_trabalho = load_workbook(planilha_revisao_xlsx, data_only=False)
+    anotacoes_previas = _ler_linhas_revisao_anterior(pasta_trabalho)
 
     # Preferir abas técnicas originais da v4.2; na v4.3 usar as equivalentes ocultas.
-    if "decisoes" in wb.sheetnames:
-        decisions = list(_rows_dict(wb["decisoes"]))
-    elif "dados_tecnicos" in wb.sheetnames:
+    if "decisoes" in pasta_trabalho.sheetnames:
+        decisoes = list(_linhas_como_dicionario(pasta_trabalho["decisoes"]))
+    elif "dados_tecnicos" in pasta_trabalho.sheetnames:
         # Reconstrói formato mínimo de decisões a partir da tabela 1:1 técnica.
-        decisions = []
-        for t in _rows_dict(wb["dados_tecnicos"]):
-            decisions.append({
+        decisoes = []
+        for t in _linhas_como_dicionario(pasta_trabalho["dados_tecnicos"]):
+            decisoes.append({
                 "source_row": str(t.get("source_rows") or "").split(",")[0].strip() or None,
                 "processo": t.get("Processo", ""),
                 "classe": t.get("classe", ""),
@@ -623,45 +623,45 @@ def rebuild_review(review_xlsx: str, output_xlsx: str):
     else:
         raise ValueError("Workbook não contém aba 'decisoes' nem 'dados_tecnicos'.")
 
-    if "candidatos" in wb.sheetnames:
-        candidates = list(_rows_dict(wb["candidatos"]))
-    elif "candidatos_tecnicos" in wb.sheetnames:
-        candidates = list(_rows_dict(wb["candidatos_tecnicos"]))
+    if "candidatos" in pasta_trabalho.sheetnames:
+        candidatos = list(_linhas_como_dicionario(pasta_trabalho["candidatos"]))
+    elif "candidatos_tecnicos" in pasta_trabalho.sheetnames:
+        candidatos = list(_linhas_como_dicionario(pasta_trabalho["candidatos_tecnicos"]))
     else:
         raise ValueError("Workbook não contém aba 'candidatos' nem 'candidatos_tecnicos'.")
 
     # Preserva adições extras existentes e o antigo terceiro slot da v4.2.
-    preserved_additions = []
-    if "adicoes_gold" in wb.sheetnames:
-        for a in _rows_dict(wb["adicoes_gold"]):
-            text = str(a.get("texto_gold") or "").strip()
-            if text:
-                preserved_additions.append(dict(a))
-    for r in prior:
-        text = str(r.get("adicao_3_text") or "").strip()
-        if text:
-            preserved_additions.append({
+    adicoes_preservadas = []
+    if "adicoes_gold" in pasta_trabalho.sheetnames:
+        for a in _linhas_como_dicionario(pasta_trabalho["adicoes_gold"]):
+            texto = str(a.get("texto_gold") or "").strip()
+            if texto:
+                adicoes_preservadas.append(dict(a))
+    for r in anotacoes_previas:
+        texto = str(r.get("adicao_3_text") or "").strip()
+        if texto:
+            adicoes_preservadas.append({
                 "decision_sha256": str(r.get("decision_sha256") or r.get("_decision_sha256") or ""),
                 "Processo": r.get("Processo", ""),
-                "texto_gold": text,
+                "texto_gold": texto,
                 "categoria_gold": str(r.get("adicao_3_category") or ""),
                 "observacao": "Migrado automaticamente do 3º recorte ausente da v4.2",
                 "revisor": r.get("revisor", ""),
                 "revisado_em": r.get("revisado_em", ""),
             })
 
-    write_review_workbook(output_xlsx, decisions, candidates, prior_rows=prior)
+    escrever_planilha_revisao(arquivo_saida_xlsx, decisoes, candidatos, linhas_anteriores=anotacoes_previas)
 
-    if preserved_additions:
-        out_wb = load_workbook(output_xlsx)
-        add_ws = out_wb["adicoes_gold"]
-        tech_ws = out_wb["dados_tecnicos"]
-        tech_rows = list(_rows_dict(tech_ws))
-        id_by_hash = {str(t.get("_decision_sha256") or ""): str(t.get("ID") or "") for t in tech_rows}
-        for a in preserved_additions:
+    if adicoes_preservadas:
+        pasta_trabalho_saida = load_workbook(arquivo_saida_xlsx)
+        aba_adicoes = pasta_trabalho_saida["adicoes_gold"]
+        aba_tecnica = pasta_trabalho_saida["dados_tecnicos"]
+        linhas_tecnicas = list(_linhas_como_dicionario(aba_tecnica))
+        id_por_hash = {str(t.get("_decision_sha256") or ""): str(t.get("ID") or "") for t in linhas_tecnicas}
+        for a in adicoes_preservadas:
             h = str(a.get("decision_sha256") or "").strip()
-            add_ws.append([
-                id_by_hash.get(h, str(a.get("ID") or "")),
+            aba_adicoes.append([
+                id_por_hash.get(h, str(a.get("ID") or "")),
                 h,
                 a.get("Processo", ""),
                 a.get("texto_gold", ""),
@@ -670,125 +670,125 @@ def rebuild_review(review_xlsx: str, output_xlsx: str):
                 a.get("revisor", ""),
                 a.get("revisado_em", ""),
             ])
-        out_wb.save(output_xlsx)
+        pasta_trabalho_saida.save(arquivo_saida_xlsx)
 
     return {
-        "input": str(review_xlsx),
-        "output": str(output_xlsx),
-        "decisions": len(decisions),
-        "candidates": len(candidates),
-        "preserved_extra_additions": len(preserved_additions),
+        "input": str(planilha_revisao_xlsx),
+        "output": str(arquivo_saida_xlsx),
+        "decisions": len(decisoes),
+        "candidates": len(candidatos),
+        "preserved_extra_additions": len(adicoes_preservadas),
         "qwen_rerun": False,
     }
 
 
-def _tech_map(wb) -> dict[str, dict]:
-    if "dados_tecnicos" not in wb.sheetnames:
+def _mapa_tecnico(pasta_trabalho) -> dict[str, dict]:
+    if "dados_tecnicos" not in pasta_trabalho.sheetnames:
         return {}
-    out = {}
-    for t in _rows_dict(wb["dados_tecnicos"]):
+    saida = {}
+    for t in _linhas_como_dicionario(pasta_trabalho["dados_tecnicos"]):
         h = str(t.get("_decision_sha256") or "")
         if h:
-            out[h] = t
-    return out
+            saida[h] = t
+    return saida
 
 
-def _build_gold_v43(wb, output_jsonl: str):
-    review = wb["revisao"]
-    rows = list(_rows_dict(review))
-    tech = _tech_map(wb)
-    headers = [c.value for c in review[1]]
-    slots = 0
-    while f"Recorte {slots + 1}" in headers:
-        slots += 1
+def _construir_gold_v43(pasta_trabalho, arquivo_saida_jsonl: str):
+    revisao = pasta_trabalho["revisao"]
+    linhas = list(_linhas_como_dicionario(revisao))
+    tecnico = _mapa_tecnico(pasta_trabalho)
+    cabecalhos = [c.value for c in revisao[1]]
+    quantidade_recortes = 0
+    while f"Recorte {quantidade_recortes + 1}" in cabecalhos:
+        quantidade_recortes += 1
 
-    extra_additions = defaultdict(list)
-    if "adicoes_gold" in wb.sheetnames:
-        for a in _rows_dict(wb["adicoes_gold"]):
-            text = str(a.get("texto_gold") or "").strip()
-            if not text:
+    adicoes_extras = defaultdict(list)
+    if "adicoes_gold" in pasta_trabalho.sheetnames:
+        for a in _linhas_como_dicionario(pasta_trabalho["adicoes_gold"]):
+            texto = str(a.get("texto_gold") or "").strip()
+            if not texto:
                 continue
             h = str(a.get("decision_sha256") or "").strip()
-            did = str(a.get("ID") or "").strip()
-            key = h or did
-            extra_additions[key].append({
-                "text": text,
+            id_decisao_ref = str(a.get("ID") or "").strip()
+            chave = h or id_decisao_ref
+            adicoes_extras[chave].append({
+                "text": texto,
                 "category": str(a.get("categoria_gold") or "").strip(),
                 "source": "human_addition",
             })
 
-    validated = []
-    issues = []
-    total_approved = total_adjusted = total_rejected = 0
-    category_correct = category_total = 0
+    validados = []
+    problemas = []
+    total_aprovados = total_ajustados = total_rejeitados = 0
+    categorias_corretas = total_categorias = 0
 
-    for excel_row, r in enumerate(rows, start=2):
+    for linha_excel, r in enumerate(linhas, start=2):
         if str(r.get("Status da decisão") or "").strip().upper() != "VALIDADO_COMPLETO":
             continue
 
         h = str(r.get("_decision_sha256") or "").strip()
-        t = tech.get(h, {})
-        row_issues = []
+        t = tecnico.get(h, {})
+        problemas_linha = []
         gold = []
 
-        for i in range(1, slots + 1):
-            text = str(r.get(f"Recorte {i}") or "").strip()
-            cat = str(r.get(f"Categoria {i}") or "").strip()
-            status = str(r.get(f"Validação {i}") or "").strip().upper()
-            teacher_text = str(t.get(f"teacher_text_{i}") or "").strip()
-            teacher_cat = str(t.get(f"teacher_category_{i}") or "").strip()
+        for i in range(1, quantidade_recortes + 1):
+            texto = str(r.get(f"Recorte {i}") or "").strip()
+            categoria = str(r.get(f"Categoria {i}") or "").strip()
+            situacao = str(r.get(f"Validação {i}") or "").strip().upper()
+            texto_modelo = str(t.get(f"teacher_text_{i}") or "").strip()
+            categoria_modelo = str(t.get(f"teacher_category_{i}") or "").strip()
 
             # Slot sem candidato original não exige validação.
-            if not teacher_text and not text:
+            if not texto_modelo and not texto:
                 continue
-            if status not in {"APROVADO", "AJUSTADO", "REJEITADO"}:
-                row_issues.append(f"candidato {i} ainda não revisado")
+            if situacao not in {"APROVADO", "AJUSTADO", "REJEITADO"}:
+                problemas_linha.append(f"candidato {i} ainda não revisado")
                 continue
-            if status == "REJEITADO":
-                total_rejected += 1
+            if situacao == "REJEITADO":
+                total_rejeitados += 1
                 continue
-            if not text:
-                row_issues.append(f"candidato {i} sem texto final")
+            if not texto:
+                problemas_linha.append(f"candidato {i} sem texto final")
                 continue
-            if cat not in CATEGORIES:
-                row_issues.append(f"candidato {i} com categoria inválida")
+            if categoria not in CATEGORIAS:
+                problemas_linha.append(f"candidato {i} com categoria inválida")
                 continue
 
-            if status == "APROVADO":
-                total_approved += 1
+            if situacao == "APROVADO":
+                total_aprovados += 1
             else:
-                total_adjusted += 1
-            category_total += 1
-            if cat == teacher_cat:
-                category_correct += 1
-            gold.append({"text": text, "category": cat, "source": "candidate", "validation": status})
+                total_ajustados += 1
+            total_categorias += 1
+            if categoria == categoria_modelo:
+                categorias_corretas += 1
+            gold.append({"text": texto, "category": categoria, "source": "candidate", "validation": situacao})
 
         for i in range(1, 3):
-            text = str(r.get(f"Recorte ausente {i}") or "").strip()
-            cat = str(r.get(f"Categoria ausente {i}") or "").strip()
-            if not text:
+            texto = str(r.get(f"Recorte ausente {i}") or "").strip()
+            categoria = str(r.get(f"Categoria ausente {i}") or "").strip()
+            if not texto:
                 continue
-            if cat not in CATEGORIES:
-                row_issues.append(f"recorte ausente {i} sem categoria válida")
+            if categoria not in CATEGORIAS:
+                problemas_linha.append(f"recorte ausente {i} sem categoria válida")
                 continue
-            gold.append({"text": text, "category": cat, "source": "human_addition"})
+            gold.append({"text": texto, "category": categoria, "source": "human_addition"})
 
-        did = str(r.get("ID") or "")
-        for key in (h, did):
-            for a in extra_additions.get(key, []):
-                if a["category"] not in CATEGORIES:
-                    row_issues.append("adicao_gold com categoria inválida")
+        id_decisao_ref = str(r.get("ID") or "")
+        for chave in (h, id_decisao_ref):
+            for a in adicoes_extras.get(chave, []):
+                if a["category"] not in CATEGORIAS:
+                    problemas_linha.append("adicao_gold com categoria inválida")
                 else:
                     gold.append(a)
 
-        if row_issues:
-            issues.append({"excel_row": excel_row, "ID": did, "Processo": r.get("Processo"), "issues": "; ".join(row_issues)})
+        if problemas_linha:
+            problemas.append({"excel_row": linha_excel, "ID": id_decisao_ref, "Processo": r.get("Processo"), "issues": "; ".join(problemas_linha)})
             continue
 
-        source_rows = [x.strip() for x in str(t.get("source_rows") or "").split(",") if x.strip()]
-        obj = {
-            "source_row": int(source_rows[0]) if source_rows and source_rows[0].isdigit() else (source_rows[0] if source_rows else None),
-            "source_rows": source_rows,
+        linhas_origem = [x.strip() for x in str(t.get("source_rows") or "").split(",") if x.strip()]
+        objeto = {
+            "source_row": int(linhas_origem[0]) if linhas_origem and linhas_origem[0].isdigit() else (linhas_origem[0] if linhas_origem else None),
+            "source_rows": linhas_origem,
             "decision_sha256": h,
             "Processo": r.get("Processo"),
             "metadata": {
@@ -807,68 +807,68 @@ def _build_gold_v43(wb, output_jsonl: str):
             "decision": t.get("decisao", ""),
             "gold": gold,
         }
-        validated.append(obj)
+        validados.append(objeto)
 
-    out = Path(output_jsonl)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as f:
-        for obj in validated:
-            f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
+    saida = Path(arquivo_saida_jsonl)
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    with saida.open("w", encoding="utf-8") as f:
+        for objeto in validados:
+            f.write(json.dumps(objeto, ensure_ascii=False, default=str) + "\n")
 
-    issues_path = out.with_name("gold_build_issues.csv")
-    with issues_path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["excel_row", "ID", "Processo", "issues"])
-        writer.writeheader()
-        writer.writerows(issues)
+    caminho_problemas = saida.with_name("gold_build_issues.csv")
+    with caminho_problemas.open("w", encoding="utf-8-sig", newline="") as f:
+        gravador = csv.DictWriter(f, fieldnames=["excel_row", "ID", "Processo", "issues"])
+        gravador.writeheader()
+        gravador.writerows(problemas)
 
-    metrics = {
-        "validated_documents": len(validated),
-        "blocked_documents": len(issues),
-        "approved": total_approved,
-        "adjusted": total_adjusted,
-        "rejected": total_rejected,
-        "category_accuracy_on_useful": (category_correct / category_total) if category_total else None,
-        "output": str(out),
-        "issues": str(issues_path),
+    metricas = {
+        "validated_documents": len(validados),
+        "blocked_documents": len(problemas),
+        "approved": total_aprovados,
+        "adjusted": total_ajustados,
+        "rejected": total_rejeitados,
+        "category_accuracy_on_useful": (categorias_corretas / total_categorias) if total_categorias else None,
+        "output": str(saida),
+        "issues": str(caminho_problemas),
         "source": "revisao",
     }
-    return metrics
+    return metricas
 
 
-def _build_gold_legacy(wb, output_jsonl: str):
+def _construir_gold_legado(pasta_trabalho, arquivo_saida_jsonl: str):
     # Compatibilidade com workbooks v4.0/v4.1/v4.2.
-    if "revisao_consolidada" in wb.sheetnames:
-        review = wb["revisao_consolidada"]
-        rows = list(_rows_dict(review))
-        headers = [c.value for c in review[1]]
-        slots = 0
-        while f"candidate_{slots+1}_text" in headers:
-            slots += 1
-        validated = []
-        for r in rows:
+    if "revisao_consolidada" in pasta_trabalho.sheetnames:
+        revisao = pasta_trabalho["revisao_consolidada"]
+        linhas = list(_linhas_como_dicionario(revisao))
+        cabecalhos = [c.value for c in revisao[1]]
+        quantidade_recortes = 0
+        while f"candidate_{quantidade_recortes+1}_text" in cabecalhos:
+            quantidade_recortes += 1
+        validados = []
+        for r in linhas:
             if str(r.get("status_documento") or "").strip().upper() != "VALIDADO_COMPLETO":
                 continue
             gold = []
-            for i in range(1, slots + 1):
-                status = str(r.get(f"candidate_{i}_status") or "").strip().upper()
-                if status == "APROVADO":
-                    text = str(r.get(f"candidate_{i}_text") or "")
-                    cat = str(r.get(f"candidate_{i}_category") or "")
-                elif status == "AJUSTADO":
-                    text = str(r.get(f"candidate_{i}_texto_ajustado") or r.get(f"candidate_{i}_text") or "")
-                    cat = str(r.get(f"candidate_{i}_categoria_ajustada") or r.get(f"candidate_{i}_category") or "")
+            for i in range(1, quantidade_recortes + 1):
+                situacao = str(r.get(f"candidate_{i}_status") or "").strip().upper()
+                if situacao == "APROVADO":
+                    texto = str(r.get(f"candidate_{i}_text") or "")
+                    categoria = str(r.get(f"candidate_{i}_category") or "")
+                elif situacao == "AJUSTADO":
+                    texto = str(r.get(f"candidate_{i}_texto_ajustado") or r.get(f"candidate_{i}_text") or "")
+                    categoria = str(r.get(f"candidate_{i}_categoria_ajustada") or r.get(f"candidate_{i}_category") or "")
                 else:
                     continue
-                if text.strip():
-                    gold.append({"text": text, "category": cat, "source": "candidate"})
+                if texto.strip():
+                    gold.append({"text": texto, "category": categoria, "source": "candidate"})
             for i in range(1, 4):
-                text = str(r.get(f"adicao_{i}_text") or "").strip()
-                if text:
-                    gold.append({"text": text, "category": str(r.get(f"adicao_{i}_category") or "outro_acionavel"), "source": "human_addition"})
-            source_rows = [x.strip() for x in str(r.get("source_rows") or "").split(",") if x.strip()]
-            validated.append({
-                "source_row": int(source_rows[0]) if source_rows and source_rows[0].isdigit() else None,
-                "source_rows": source_rows,
+                texto = str(r.get(f"adicao_{i}_text") or "").strip()
+                if texto:
+                    gold.append({"text": texto, "category": str(r.get(f"adicao_{i}_category") or "outro_acionavel"), "source": "human_addition"})
+            linhas_origem = [x.strip() for x in str(r.get("source_rows") or "").split(",") if x.strip()]
+            validados.append({
+                "source_row": int(linhas_origem[0]) if linhas_origem and linhas_origem[0].isdigit() else None,
+                "source_rows": linhas_origem,
                 "decision_sha256": r.get("decision_sha256", ""),
                 "Processo": r.get("Processo"),
                 "metadata": {
@@ -887,62 +887,62 @@ def _build_gold_legacy(wb, output_jsonl: str):
                 "decision": r.get("decisao", ""),
                 "gold": gold,
             })
-        out = Path(output_jsonl)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("w", encoding="utf-8") as f:
-            for obj in validated:
-                f.write(json.dumps(obj, ensure_ascii=False, default=str) + "\n")
-        return {"validated_documents": len(validated), "output": str(out), "source": "revisao_consolidada"}
+        saida = Path(arquivo_saida_jsonl)
+        saida.parent.mkdir(parents=True, exist_ok=True)
+        with saida.open("w", encoding="utf-8") as f:
+            for objeto in validados:
+                f.write(json.dumps(objeto, ensure_ascii=False, default=str) + "\n")
+        return {"validated_documents": len(validados), "output": str(saida), "source": "revisao_consolidada"}
 
-    decisions = wb["decisoes"]
-    cand = wb["candidatos"]
-    add = wb["adicoes_gold"]
-    dmap = {}
-    for d in _rows_dict(decisions):
+    decisoes = pasta_trabalho["decisoes"]
+    aba_candidatos = pasta_trabalho["candidatos"]
+    aba_adicoes = pasta_trabalho["adicoes_gold"]
+    mapa_decisoes = {}
+    for d in _linhas_como_dicionario(decisoes):
         if str(d.get("status_documento", "")).strip().upper() == "VALIDADO_COMPLETO":
-            dmap[int(d["source_row"])] = d
-    gold = {k: [] for k in dmap}
-    for c in _rows_dict(cand):
+            mapa_decisoes[int(d["source_row"])] = d
+    gold = {k: [] for k in mapa_decisoes}
+    for c in _linhas_como_dicionario(aba_candidatos):
         try:
-            sr = int(c.get("source_row"))
+            linha_origem_ref = int(c.get("source_row"))
         except Exception:
             continue
-        if sr not in dmap:
+        if linha_origem_ref not in mapa_decisoes:
             continue
-        status = str(c.get("status_validacao", "")).strip().upper()
-        if status == "APROVADO":
-            text = str(c.get("candidate_text") or "")
-            cat = str(c.get("teacher_category") or "")
-        elif status == "AJUSTADO":
-            text = str(c.get("texto_ajustado") or c.get("candidate_text") or "")
-            cat = str(c.get("categoria_ajustada") or c.get("teacher_category") or "")
+        situacao = str(c.get("status_validacao", "")).strip().upper()
+        if situacao == "APROVADO":
+            texto = str(c.get("candidate_text") or "")
+            categoria = str(c.get("teacher_category") or "")
+        elif situacao == "AJUSTADO":
+            texto = str(c.get("texto_ajustado") or c.get("candidate_text") or "")
+            categoria = str(c.get("categoria_ajustada") or c.get("teacher_category") or "")
         else:
             continue
-        if text.strip():
-            gold[sr].append({"text": text, "category": cat, "source": "candidate"})
-    for a in _rows_dict(add):
+        if texto.strip():
+            gold[linha_origem_ref].append({"text": texto, "category": categoria, "source": "candidate"})
+    for a in _linhas_como_dicionario(aba_adicoes):
         try:
-            sr = int(a.get("source_row"))
+            linha_origem_ref = int(a.get("source_row"))
         except Exception:
             continue
-        if sr in dmap and str(a.get("texto_gold") or "").strip():
-            gold[sr].append({"text": str(a["texto_gold"]), "category": str(a.get("categoria_gold") or "outro_acionavel"), "source": "human_addition"})
-    out = Path(output_jsonl)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as f:
-        for sr, d in dmap.items():
+        if linha_origem_ref in mapa_decisoes and str(a.get("texto_gold") or "").strip():
+            gold[linha_origem_ref].append({"text": str(a["texto_gold"]), "category": str(a.get("categoria_gold") or "outro_acionavel"), "source": "human_addition"})
+    saida = Path(arquivo_saida_jsonl)
+    saida.parent.mkdir(parents=True, exist_ok=True)
+    with saida.open("w", encoding="utf-8") as f:
+        for linha_origem_ref, d in mapa_decisoes.items():
             f.write(json.dumps({
-                "source_row": sr,
+                "source_row": linha_origem_ref,
                 "Processo": d.get("processo") or d.get("Processo"),
                 "metadata": {k: v for k, v in d.items() if k not in {"decisao", "status_documento"}},
                 "decision": d.get("decisao", ""),
-                "gold": gold.get(sr, []),
+                "gold": gold.get(linha_origem_ref, []),
             }, ensure_ascii=False, default=str) + "\n")
-    return {"validated_documents": len(dmap), "output": str(out), "source": "legacy"}
+    return {"validated_documents": len(mapa_decisoes), "output": str(saida), "source": "legacy"}
 
 
-def build_gold(review_xlsx: str, output_jsonl: str):
-    wb = load_workbook(review_xlsx, data_only=True)
-    if "revisao" in wb.sheetnames and "dados_tecnicos" in wb.sheetnames:
-        return _build_gold_v43(wb, output_jsonl)
-    return _build_gold_legacy(wb, output_jsonl)
+def construir_gold(planilha_revisao_xlsx: str, arquivo_saida_jsonl: str):
+    pasta_trabalho = load_workbook(planilha_revisao_xlsx, data_only=True)
+    if "revisao" in pasta_trabalho.sheetnames and "dados_tecnicos" in pasta_trabalho.sheetnames:
+        return _construir_gold_v43(pasta_trabalho, arquivo_saida_jsonl)
+    return _construir_gold_legado(pasta_trabalho, arquivo_saida_jsonl)

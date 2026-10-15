@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import Any, Iterable
 import re
 from openpyxl import load_workbook
-from .text_utils import norm
+from .text_utils import normalizar
 
-ALIASES = {
+ALIASES_CABECALHOS = {
     "processo": {"processo", "numero_processo", "n_processo"},
     "classe": {"classe", "classe_judicial"},
     "origem": {"origem"},
@@ -23,45 +23,45 @@ ALIASES = {
 }
 
 
-def _canon_header(v: Any) -> str:
-    s = norm("" if v is None else str(v))
+def _normalizar_cabecalho(v: Any) -> str:
+    s = normalizar("" if v is None else str(v))
     s = re.sub(r"[^a-z0-9/]+", "_", s).strip("_")
     return s
 
 
-def _find_columns(headers):
-    canon = {_canon_header(h): i for i, h in enumerate(headers)}
-    out = {}
-    for key, vals in ALIASES.items():
-        candidates = {_canon_header(v) for v in vals}
-        for c in candidates:
-            if c in canon:
-                out[key] = canon[c]
+def _localizar_colunas(cabecalhos):
+    cabecalhos_normalizados = {_normalizar_cabecalho(h): i for i, h in enumerate(cabecalhos)}
+    saida = {}
+    for chave, valores in ALIASES_CABECALHOS.items():
+        candidatos = {_normalizar_cabecalho(v) for v in valores}
+        for c in candidatos:
+            if c in cabecalhos_normalizados:
+                saida[chave] = cabecalhos_normalizados[c]
                 break
-    missing = [x for x in ("processo", "classe", "orgao_julgador", "expediente", "decisao") if x not in out]
-    if missing:
-        raise ValueError(f"Colunas obrigatórias não encontradas: {missing}. Cabeçalhos: {headers}")
-    return out
+    faltantes = [x for x in ("processo", "classe", "orgao_julgador", "expediente", "decisao") if x not in saida]
+    if faltantes:
+        raise ValueError(f"Colunas obrigatórias não encontradas: {faltantes}. Cabeçalhos: {cabecalhos}")
+    return saida
 
 @dataclass
-class DecisionRecord:
-    source_row: int
-    data: dict
+class RegistroDecisao:
+    linha_origem: int
+    dados: dict
 
 
-def iter_records(path: str, sheet: str | None = None) -> Iterable[DecisionRecord]:
-    p = Path(path)
+def iterar_registros(caminho: str, aba: str | None = None) -> Iterable[RegistroDecisao]:
+    p = Path(caminho)
     if not p.exists():
-        raise FileNotFoundError(path)
-    wb = load_workbook(p, read_only=True, data_only=True)
-    ws = wb[sheet] if sheet else wb[wb.sheetnames[0]]
-    rows = ws.iter_rows(values_only=True)
-    headers = list(next(rows))
-    mapping = _find_columns(headers)
-    for excel_row, row in enumerate(rows, start=2):
+        raise FileNotFoundError(caminho)
+    pasta_trabalho = load_workbook(p, read_only=True, data_only=True)
+    planilha = pasta_trabalho[aba] if aba else pasta_trabalho[pasta_trabalho.sheetnames[0]]
+    linhas = planilha.iter_rows(values_only=True)
+    cabecalhos = list(next(linhas))
+    mapeamento = _localizar_colunas(cabecalhos)
+    for linha_excel, linha in enumerate(linhas, start=2):
         d = {}
-        for key, idx in mapping.items():
-            d[key] = row[idx] if idx < len(row) else None
+        for chave, indice in mapeamento.items():
+            d[chave] = linha[indice] if indice < len(linha) else None
         d["decisao"] = "" if d.get("decisao") is None else str(d.get("decisao"))
         d["processo"] = "" if d.get("processo") is None else str(d.get("processo"))
-        yield DecisionRecord(excel_row, d)
+        yield RegistroDecisao(linha_excel, d)

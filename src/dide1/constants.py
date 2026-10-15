@@ -1,4 +1,4 @@
-CATEGORIES = [
+CATEGORIAS = [
     "resultado_julgamento",
     "ordem_determinacao",
     "intimacao_manifestacao",
@@ -13,7 +13,7 @@ CATEGORIES = [
     "outro_acionavel",
 ]
 
-IGNORED_COLUMNS = {
+COLUNAS_IGNORADAS = {
     "tag_decisao",
     "integra_2x",
     "incluir_na_triagem",

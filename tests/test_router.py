@@ -1,7 +1,7 @@
-from dide1.router import class_family
+from dide1.router import familia_classe
 
-def test_ms():
-    assert class_family("Mandado de Segurança Cível") == "mandado_seguranca"
+def test_mandado_seguranca():
+    assert familia_classe("Mandado de Segurança Cível") == "mandado_seguranca"
 
 def test_cumprimento():
-    assert class_family("Cumprimento de Sentença") == "cumprimento_sentenca"
+    assert familia_classe("Cumprimento de Sentença") == "cumprimento_sentenca"

@@ -2,18 +2,18 @@ import re
 import unicodedata
 
 
-def strip_accents(text: str) -> str:
-    text = "" if text is None else str(text)
-    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+def remover_acentos(texto: str) -> str:
+    texto = "" if texto is None else str(texto)
+    return "".join(c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c))
 
 
-def norm(text: str) -> str:
-    text = strip_accents(text).casefold()
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+def normalizar(texto: str) -> str:
+    texto = remover_acentos(texto).casefold()
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
 
 
-def slug(text: str, max_len: int = 80) -> str:
-    s = norm(text)
+def gerar_slug(texto: str, tamanho_maximo: int = 80) -> str:
+    s = normalizar(texto)
     s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
-    return (s[:max_len] or "na")
+    return (s[:tamanho_maximo] or "na")

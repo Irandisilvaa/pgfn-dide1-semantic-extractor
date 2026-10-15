@@ -1,11 +1,11 @@
 from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
-from dide1.pipeline import run
-from dide1.teacher import TeacherResult
+from dide1.pipeline import executar
+from dide1.teacher import ResultadoModelo
 
 
-def _make_xlsx(path: Path):
+def _criar_xlsx(path: Path):
     wb = Workbook()
     ws = wb.active
     ws.append(["Processo", "Classe", "Origem", "Órgão Julgador", "Expediente", "Assunto", "Seção/Subseção", "Decisão Judicial", "Núcleo"])
@@ -19,24 +19,24 @@ def _make_xlsx(path: Path):
     wb.save(path)
 
 
-def test_unique_limit_yields_exact_unique_review_rows(tmp_path, monkeypatch):
-    inp = tmp_path / "in.xlsx"
-    out = tmp_path / "out"
-    _make_xlsx(inp)
+def test_limite_unicos_gera_quantidade_exata_de_decisoes(tmp_path, monkeypatch):
+    entrada = tmp_path / "in.xlsx"
+    saida = tmp_path / "out"
+    _criar_xlsx(entrada)
 
-    def fake_call(record, units, routing, rule_match, max_candidates=3):
-        actionable = [u for u in units if "Intime-se" in u.text][0]
-        return TeacherResult(
-            selected=[{"unit_ids": [actionable.unit_id], "category": "intimacao_manifestacao", "priority": 1, "reason": "ok"}],
-            status="OK", attempts=1, response_mode="json_schema",
+    def chamada_falsa(registro, unidades, roteamento, regra_encontrada, maximo_candidatos=3):
+        acionavel = [u for u in unidades if "Intime-se" in u.texto][0]
+        return ResultadoModelo(
+            selecionados=[{"unit_ids": [acionavel.id_unidade], "category": "intimacao_manifestacao", "priority": 1, "reason": "ok"}],
+            situacao="OK", tentativas=1, modo_resposta="json_schema",
         )
 
-    monkeypatch.setattr("dide1.pipeline.call_llama", fake_call)
-    manifest = run(str(inp), str(out), teacher_mode="llama", unique_limit=2)
-    assert manifest["unique_decisions"] == 2
-    assert manifest["scanned"] == 3
-    assert manifest["processed"] == 3
-    assert manifest["cache_hits"] == 1
+    monkeypatch.setattr("dide1.pipeline.chamar_modelo", chamada_falsa)
+    manifesto = executar(str(entrada), str(saida), modo_modelo="llama", limite_unicos=2)
+    assert manifesto["unique_decisions"] == 2
+    assert manifesto["scanned"] == 3
+    assert manifesto["processed"] == 3
+    assert manifesto["cache_hits"] == 1
 
-    wb = load_workbook(out / "review.xlsx")
+    wb = load_workbook(saida / "review.xlsx")
     assert wb["revisao"].max_row == 3  # cabeçalho + 2 decisões únicas
